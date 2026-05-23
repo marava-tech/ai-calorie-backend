@@ -104,4 +104,9 @@ app.include_router(notifications.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "fitness-os"}
+    return {
+        "status": "ok",
+        "service": "fitness-os",
+        "version": "1.0.0",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
