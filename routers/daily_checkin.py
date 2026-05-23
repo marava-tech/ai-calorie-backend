@@ -16,9 +16,13 @@ class CheckinCreate(BaseModel):
     gym: Optional[bool] = None
     workout_type: Optional[str] = None
     fish_oil: Optional[bool] = None
+    fish_oil_caps: Optional[int] = None
     magnesium: Optional[bool] = None
+    magnesium_caps: Optional[int] = None
     vitamin_d3: Optional[bool] = None
+    vitamin_d3_caps: Optional[int] = None
     multi_vitamin: Optional[bool] = None
+    multi_vitamin_caps: Optional[int] = None
     if_followed: Optional[bool] = None
     gym_photo: Optional[str] = None  # "uploaded" | "skipped"
 
