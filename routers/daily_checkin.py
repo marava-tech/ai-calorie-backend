@@ -23,6 +23,8 @@ class CheckinCreate(BaseModel):
     vitamin_d3_caps: Optional[int] = None
     multi_vitamin: Optional[bool] = None
     multi_vitamin_caps: Optional[int] = None
+    whey_protein: Optional[bool] = None
+    whey_protein_scoops: Optional[int] = None
     if_followed: Optional[bool] = None
     gym_photo: Optional[str] = None  # "uploaded" | "skipped"
 
