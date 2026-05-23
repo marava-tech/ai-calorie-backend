@@ -23,6 +23,7 @@ from routers import (
     streaks,
     summary,
     notifications,
+    daily_checkin,
 )
 
 scheduler = AsyncIOScheduler()
@@ -102,6 +103,7 @@ app.include_router(weight.router)
 app.include_router(streaks.router)
 app.include_router(summary.router)
 app.include_router(notifications.router)
+app.include_router(daily_checkin.router)
 
 
 @app.get("/health")
