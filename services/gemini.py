@@ -4,21 +4,29 @@ import base64
 import json
 import re
 from typing import Optional
-import google.generativeai as genai
 
-_model: genai.GenerativeModel | None = None
+from google import genai
+from google.genai import types
 
-
-def _get_model() -> genai.GenerativeModel:
-    global _model
-    if _model is None:
-        genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        _model = genai.GenerativeModel("gemini-1.5-flash")
-    return _model
+_client: genai.Client | None = None
 
 
-def _image_part(image_bytes: bytes, mime: str = "image/jpeg") -> dict:
-    return {"mime_type": mime, "data": base64.b64encode(image_bytes).decode()}
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    return _client
+
+
+def _image_part(image_bytes: bytes, mime: str = "image/jpeg") -> types.Part:
+    return types.Part.from_bytes(data=image_bytes, mime_type=mime)
+
+
+def _parse_json(text: str) -> dict:
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?\n?", "", text)
+    text = re.sub(r"\n?```$", "", text)
+    return json.loads(text)
 
 
 async def analyze_food(image_bytes: bytes) -> dict:
@@ -33,18 +41,16 @@ async def analyze_food(image_bytes: bytes) -> dict:
         "otherwise null.\n"
         "Output ONLY the JSON, no other text."
     )
-    model = _get_model()
-    response = model.generate_content([prompt, _image_part(image_bytes)])
-    text = response.text.strip()
-    # Strip markdown code fences if present
-    text = re.sub(r"^```(?:json)?\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    response = _get_client().models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[prompt, _image_part(image_bytes)],
+    )
+    return _parse_json(response.text)
 
 
 async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
     """
-    bowls: list of {id, name, tare_weight_g, image_bytes (b64 encoded)}
+    bowls: list of {id, name, tare_weight_g, image_b64}
     Returns {bowl_id, confidence, bowl_name, tare_weight_g} or empty if no match.
     """
     if not bowls:
@@ -55,9 +61,8 @@ async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
     for i, b in enumerate(bowls):
         label = f"Bowl {i+1}: {b['name']} (ID: {b['id']})"
         bowl_desc.append(label)
-        parts.append(f"\n{label}:")
-        img_bytes = base64.b64decode(b["image_b64"])
-        parts.append(_image_part(img_bytes))
+        parts.append(label)
+        parts.append(_image_part(base64.b64decode(b["image_b64"])))
 
     bowl_list = "\n".join(bowl_desc)
     prompt = (
@@ -71,16 +76,12 @@ async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
         "Output ONLY the JSON."
     )
 
-    content = [prompt]
-    content.extend(parts)
-    content.append(_image_part(food_image_bytes))
-
-    model = _get_model()
-    response = model.generate_content(content)
-    text = response.text.strip()
-    text = re.sub(r"^```(?:json)?\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    result = json.loads(text)
+    content = [prompt] + parts + [_image_part(food_image_bytes)]
+    response = _get_client().models.generate_content(
+        model="gemini-2.0-flash",
+        contents=content,
+    )
+    result = _parse_json(response.text)
 
     matched_id = result.get("matched_bowl_id")
     confidence = float(result.get("confidence", 0.0))
@@ -104,8 +105,10 @@ async def describe_bowl(image_bytes: bytes) -> str:
         "Mention: shape, color, size, any distinctive markings. "
         "Keep it under 40 words. Output ONLY the description text."
     )
-    model = _get_model()
-    response = model.generate_content([prompt, _image_part(image_bytes)])
+    response = _get_client().models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[prompt, _image_part(image_bytes)],
+    )
     return response.text.strip()
 
 
@@ -114,13 +117,7 @@ async def analyze_body_photo(
     prev_image_bytes: Optional[bytes],
     angle: str,
 ) -> dict:
-    """
-    Returns {caption, bf_low_pct, bf_high_pct}
-    """
-    parts = [current_image_bytes]
-    if prev_image_bytes:
-        parts.insert(0, prev_image_bytes)
-
+    """Returns {caption, bf_low_pct, bf_high_pct}"""
     context = (
         "You are analyzing physique photos for body composition tracking. "
         "This is a personal fitness tool.\n\n"
@@ -143,13 +140,16 @@ async def analyze_body_photo(
         "Output ONLY the JSON."
     )
 
-    model = _get_model()
-    content = [prompt] + [_image_part(b) for b in parts]
-    response = model.generate_content(content)
-    text = response.text.strip()
-    text = re.sub(r"^```(?:json)?\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    images = []
+    if prev_image_bytes:
+        images.append(_image_part(prev_image_bytes))
+    images.append(_image_part(current_image_bytes))
+
+    response = _get_client().models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[prompt] + images,
+    )
+    return _parse_json(response.text)
 
 
 async def estimate_macros(food_name: str, weight_g: float) -> dict:
@@ -160,9 +160,8 @@ async def estimate_macros(food_name: str, weight_g: float) -> dict:
         '{"calories_kcal": number, "protein_g": number, "carbs_g": number, "fat_g": number}\n'
         "Output ONLY the JSON."
     )
-    model = _get_model()
-    response = model.generate_content([prompt])
-    text = response.text.strip()
-    text = re.sub(r"^```(?:json)?\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    response = _get_client().models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[prompt],
+    )
+    return _parse_json(response.text)
