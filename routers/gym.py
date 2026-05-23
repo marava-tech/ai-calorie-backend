@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from bson import ObjectId
 from typing import Optional
 
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.gym_session import GymSessionCreate, PhotoAngle
 from services import gemini as gemini_svc
@@ -20,7 +20,7 @@ def _serialize(doc: dict) -> dict:
 
 
 @router.post("", status_code=201)
-async def create_session(body: GymSessionCreate, _: str = Depends(verify_api_key)):
+async def create_session(body: GymSessionCreate, _: str = Depends(get_current_user)):
     db = get_db()
     doc = {
         **body.model_dump(),
@@ -38,7 +38,7 @@ async def create_session(body: GymSessionCreate, _: str = Depends(verify_api_key
 
 
 @router.get("")
-async def list_sessions(month: str, _: str = Depends(verify_api_key)):
+async def list_sessions(month: str, _: str = Depends(get_current_user)):
     """month format: YYYY-MM"""
     db = get_db()
     docs = await db.gym_sessions.find({"date": {"$regex": f"^{month}"}}).to_list(None)
@@ -50,7 +50,7 @@ async def upload_photo(
     session_id: str,
     angle: PhotoAngle = Form(...),
     photo: UploadFile = File(...),
-    _: str = Depends(verify_api_key),
+    _: str = Depends(get_current_user),
 ):
     db = get_db()
     session = await db.gym_sessions.find_one({"_id": ObjectId(session_id)})
@@ -143,7 +143,7 @@ async def _update_gym_streak(db):
 
 @router.post("/{session_id}/photos/{photo_id}/analyze")
 async def analyze_photo(
-    session_id: str, photo_id: str, _: str = Depends(verify_api_key)
+    session_id: str, photo_id: str, _: str = Depends(get_current_user)
 ):
     """Re-trigger body analysis on demand."""
     db = get_db()

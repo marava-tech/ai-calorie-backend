@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from bson import ObjectId
 from typing import Optional
 
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.food_log import FoodLogCreate, FoodItem, MacroSource, MealSlot
 from services import gemini as gemini_svc
@@ -60,7 +60,7 @@ async def _update_if_log(food_date: str, timestamp: datetime, db):
 @router.post("/analyze")
 async def analyze_food(
     photo: UploadFile = File(...),
-    _: str = Depends(verify_api_key),
+    _: str = Depends(get_current_user),
 ):
     db = get_db()
     image_bytes = await photo.read()
@@ -122,7 +122,7 @@ async def analyze_food(
 
 
 @router.post("/logs", status_code=201)
-async def create_food_log(body: FoodLogCreate, _: str = Depends(verify_api_key)):
+async def create_food_log(body: FoodLogCreate, _: str = Depends(get_current_user)):
     db = get_db()
     now = datetime.now(timezone.utc)
     food_date = now.date().isoformat()
@@ -165,7 +165,7 @@ async def create_food_log(body: FoodLogCreate, _: str = Depends(verify_api_key))
 
 
 @router.get("/logs")
-async def get_food_logs(date_str: str, _: str = Depends(verify_api_key)):
+async def get_food_logs(date_str: str, _: str = Depends(get_current_user)):
     """date_str format: YYYY-MM-DD (query param ?date=)"""
     db = get_db()
     docs = await db.food_logs.find({"date": date_str}).to_list(None)

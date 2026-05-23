@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from bson import ObjectId
 
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.bowl import BowlPatch
 from services import gemini as gemini_svc
@@ -24,7 +24,7 @@ async def create_bowl(
     tare_weight_g: float = Form(...),
     ai_description: str = Form(""),
     photo: UploadFile = File(...),
-    _: str = Depends(verify_api_key),
+    _: str = Depends(get_current_user),
 ):
     db = get_db()
     image_bytes = await photo.read()
@@ -51,14 +51,14 @@ async def create_bowl(
 
 
 @router.get("")
-async def list_bowls(_: str = Depends(verify_api_key)):
+async def list_bowls(_: str = Depends(get_current_user)):
     db = get_db()
     docs = await db.bowls.find({}).to_list(None)
     return [_serialize(d) for d in docs]
 
 
 @router.patch("/{bowl_id}")
-async def update_bowl(bowl_id: str, body: BowlPatch, _: str = Depends(verify_api_key)):
+async def update_bowl(bowl_id: str, body: BowlPatch, _: str = Depends(get_current_user)):
     db = get_db()
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update_data:
@@ -71,7 +71,7 @@ async def update_bowl(bowl_id: str, body: BowlPatch, _: str = Depends(verify_api
 
 
 @router.delete("/{bowl_id}", status_code=204)
-async def delete_bowl(bowl_id: str, _: str = Depends(verify_api_key)):
+async def delete_bowl(bowl_id: str, _: str = Depends(get_current_user)):
     db = get_db()
     result = await db.bowls.delete_one({"_id": ObjectId(bowl_id)})
     if result.deleted_count == 0:

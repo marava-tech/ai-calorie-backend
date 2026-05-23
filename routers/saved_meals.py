@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.saved_meal import SavedMealCreate, SavedMealPatch
 
@@ -16,7 +16,7 @@ def _serialize(doc: dict) -> dict:
 
 
 @router.post("", status_code=201)
-async def create_saved_meal(body: SavedMealCreate, _: str = Depends(verify_api_key)):
+async def create_saved_meal(body: SavedMealCreate, _: str = Depends(get_current_user)):
     db = get_db()
     totals = {"calories_kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
     for item in body.items:
@@ -38,7 +38,7 @@ async def create_saved_meal(body: SavedMealCreate, _: str = Depends(verify_api_k
 
 
 @router.get("")
-async def list_saved_meals(_: str = Depends(verify_api_key)):
+async def list_saved_meals(_: str = Depends(get_current_user)):
     db = get_db()
     docs = await db.saved_meals.find({}).sort("use_count", -1).to_list(None)
     return [_serialize(d) for d in docs]
@@ -46,7 +46,7 @@ async def list_saved_meals(_: str = Depends(verify_api_key)):
 
 @router.patch("/{meal_id}")
 async def update_saved_meal(
-    meal_id: str, body: SavedMealPatch, _: str = Depends(verify_api_key)
+    meal_id: str, body: SavedMealPatch, _: str = Depends(get_current_user)
 ):
     db = get_db()
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -62,7 +62,7 @@ async def update_saved_meal(
 
 
 @router.delete("/{meal_id}", status_code=204)
-async def delete_saved_meal(meal_id: str, _: str = Depends(verify_api_key)):
+async def delete_saved_meal(meal_id: str, _: str = Depends(get_current_user)):
     db = get_db()
     result = await db.saved_meals.delete_one({"_id": ObjectId(meal_id)})
     if result.deleted_count == 0:
@@ -70,7 +70,7 @@ async def delete_saved_meal(meal_id: str, _: str = Depends(verify_api_key)):
 
 
 @router.post("/{meal_id}/use", status_code=201)
-async def use_saved_meal(meal_id: str, meal_slot: str, _: str = Depends(verify_api_key)):
+async def use_saved_meal(meal_id: str, meal_slot: str, _: str = Depends(get_current_user)):
     """Log a saved meal directly to food_logs and increment use_count."""
     db = get_db()
     meal = await db.saved_meals.find_one({"_id": ObjectId(meal_id)})

@@ -1,7 +1,7 @@
 """Weekly summary aggregation."""
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 
 router = APIRouter(prefix="/api/summary", tags=["summary"])
@@ -16,7 +16,7 @@ def _week_dates(week_str: str) -> tuple[str, str]:
 
 
 @router.get("/weekly")
-async def weekly_summary(week: str, _: str = Depends(verify_api_key)):
+async def weekly_summary(week: str, _: str = Depends(get_current_user)):
     """week format: YYYY-WN (e.g. 2026-W21)"""
     try:
         # Normalize: "YYYY-WW" or "YYYY-WN"

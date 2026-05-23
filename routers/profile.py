@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
 
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.profile import ProfileCreate, ProfilePatch
 from services.tdee import calculate_tdee
@@ -18,7 +18,7 @@ def _tdee_dict(doc: dict) -> dict:
 
 
 @router.post("", status_code=201)
-async def create_profile(body: ProfileCreate, _: str = Depends(verify_api_key)):
+async def create_profile(body: ProfileCreate, _: str = Depends(get_current_user)):
     db = get_db()
     existing = await db.user_profile.find_one({})
     if existing:
@@ -39,7 +39,7 @@ async def create_profile(body: ProfileCreate, _: str = Depends(verify_api_key)):
 
 
 @router.get("")
-async def get_profile(_: str = Depends(verify_api_key)):
+async def get_profile(_: str = Depends(get_current_user)):
     db = get_db()
     doc = await db.user_profile.find_one({})
     if not doc:
@@ -49,7 +49,7 @@ async def get_profile(_: str = Depends(verify_api_key)):
 
 
 @router.patch("")
-async def patch_profile(body: ProfilePatch, _: str = Depends(verify_api_key)):
+async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     db = get_db()
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update_data:

@@ -1,13 +1,13 @@
 """Body analysis — trend endpoint."""
 from fastapi import APIRouter, Depends
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 
 router = APIRouter(prefix="/api/body-analysis", tags=["body-analysis"])
 
 
 @router.get("/trend")
-async def body_fat_trend(_: str = Depends(verify_api_key)):
+async def body_fat_trend(_: str = Depends(get_current_user)):
     """Return time-series of body fat midpoint estimates from gym photo analyses."""
     db = get_db()
     sessions = await db.gym_sessions.find(

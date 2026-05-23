@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 from typing import Optional
 
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.supplement import SupplementCreate, SupplementPatch, SupplementLogCreate
 
@@ -19,7 +19,7 @@ def _serialize(doc: dict) -> dict:
 # ─── Supplement presets ──────────────────────────────────────────────────────
 
 @router.post("", status_code=201)
-async def create_supplement(body: SupplementCreate, _: str = Depends(verify_api_key)):
+async def create_supplement(body: SupplementCreate, _: str = Depends(get_current_user)):
     db = get_db()
     doc = {
         **body.model_dump(),
@@ -34,7 +34,7 @@ async def create_supplement(body: SupplementCreate, _: str = Depends(verify_api_
 
 
 @router.get("")
-async def list_supplements(_: str = Depends(verify_api_key)):
+async def list_supplements(_: str = Depends(get_current_user)):
     db = get_db()
     docs = await db.supplements.find({}).to_list(None)
     return [_serialize(d) for d in docs]
@@ -42,7 +42,7 @@ async def list_supplements(_: str = Depends(verify_api_key)):
 
 @router.patch("/{supp_id}")
 async def update_supplement(
-    supp_id: str, body: SupplementPatch, _: str = Depends(verify_api_key)
+    supp_id: str, body: SupplementPatch, _: str = Depends(get_current_user)
 ):
     db = get_db()
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -58,7 +58,7 @@ async def update_supplement(
 
 
 @router.delete("/{supp_id}", status_code=204)
-async def delete_supplement(supp_id: str, _: str = Depends(verify_api_key)):
+async def delete_supplement(supp_id: str, _: str = Depends(get_current_user)):
     db = get_db()
     result = await db.supplements.delete_one({"_id": ObjectId(supp_id)})
     if result.deleted_count == 0:
@@ -68,7 +68,7 @@ async def delete_supplement(supp_id: str, _: str = Depends(verify_api_key)):
 # ─── Supplement logs ─────────────────────────────────────────────────────────
 
 @router.post("/logs", status_code=201)
-async def log_supplement(body: SupplementLogCreate, _: str = Depends(verify_api_key)):
+async def log_supplement(body: SupplementLogCreate, _: str = Depends(get_current_user)):
     db = get_db()
     supp = await db.supplements.find_one({"_id": ObjectId(body.supplement_id)})
     if not supp:
@@ -103,7 +103,7 @@ async def log_supplement(body: SupplementLogCreate, _: str = Depends(verify_api_
 
 
 @router.get("/logs")
-async def get_supplement_logs(date_str: str, _: str = Depends(verify_api_key)):
+async def get_supplement_logs(date_str: str, _: str = Depends(get_current_user)):
     """Returns checklist: all supplements with taken status for the date."""
     db = get_db()
     supplements = await db.supplements.find({}).to_list(None)
@@ -172,7 +172,7 @@ async def _update_supplement_streak(supplement_id: str, db):
 async def supplement_correlation(
     supp_id: str,
     other: str = "sleep",
-    _: str = Depends(verify_api_key),
+    _: str = Depends(get_current_user),
 ):
     """Compare sleep quality on supplement-taken nights vs not-taken nights."""
     db = get_db()

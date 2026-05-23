@@ -1,7 +1,7 @@
 """Sleep quality logs."""
 from datetime import datetime, timezone, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.sleep_log import SleepLogCreate
 
@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/sleep-logs", tags=["sleep"])
 
 
 @router.post("", status_code=201)
-async def log_sleep(body: SleepLogCreate, _: str = Depends(verify_api_key)):
+async def log_sleep(body: SleepLogCreate, _: str = Depends(get_current_user)):
     db = get_db()
     # Upsert — one log per date
     existing = await db.sleep_logs.find_one({"date": body.date})
@@ -33,7 +33,7 @@ async def log_sleep(body: SleepLogCreate, _: str = Depends(verify_api_key)):
 
 
 @router.get("")
-async def get_sleep_logs(days: int = 30, _: str = Depends(verify_api_key)):
+async def get_sleep_logs(days: int = 30, _: str = Depends(get_current_user)):
     db = get_db()
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     docs = await db.sleep_logs.find(

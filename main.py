@@ -10,6 +10,7 @@ from database import get_db
 from services import fcm as fcm_svc
 
 from routers import (
+    auth_router,
     profile,
     bowls,
     food,
@@ -88,6 +89,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth_router.router)
 app.include_router(profile.router)
 app.include_router(bowls.router)
 app.include_router(food.router)

@@ -1,7 +1,7 @@
 """Weight logs + TDEE recalculation on save."""
 from datetime import datetime, timezone, date, timedelta
 from fastapi import APIRouter, Depends
-from auth import verify_api_key
+from auth import get_current_user
 from database import get_db
 from models.weight_log import WeightLogCreate
 from services.tdee import calculate_tdee
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/weight-logs", tags=["weight"])
 
 
 @router.post("", status_code=201)
-async def log_weight(body: WeightLogCreate, _: str = Depends(verify_api_key)):
+async def log_weight(body: WeightLogCreate, _: str = Depends(get_current_user)):
     db = get_db()
     doc = {
         "date": body.date,
@@ -43,7 +43,7 @@ async def log_weight(body: WeightLogCreate, _: str = Depends(verify_api_key)):
 
 
 @router.get("")
-async def get_weight_logs(days: int = 90, _: str = Depends(verify_api_key)):
+async def get_weight_logs(days: int = 90, _: str = Depends(get_current_user)):
     db = get_db()
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     docs = await db.weight_logs.find(
