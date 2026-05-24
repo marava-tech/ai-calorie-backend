@@ -42,7 +42,16 @@ async def calculate_all_streaks() -> dict:
     if_docs = await db.daily_checkins.find({"if_followed": True}, {"date": 1}).to_list(None)
     if_current, if_best = await consecutive_days([d["date"] for d in if_docs])
 
-    supp_docs = await db.supplement_logs.find({}, {"date": 1}).to_list(None)
+    supp_docs = await db.daily_checkins.find(
+        {"$or": [
+            {"fish_oil": True},
+            {"magnesium": True},
+            {"vitamin_d3": True},
+            {"multi_vitamin": True},
+            {"whey_protein": True},
+        ]},
+        {"date": 1},
+    ).to_list(None)
     supp_current, supp_best = await consecutive_days(list({d["date"] for d in supp_docs}))
 
     return {
