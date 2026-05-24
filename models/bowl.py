@@ -4,8 +4,8 @@ from typing import Optional
 
 class BowlCreate(BaseModel):
     name: str
-    tare_weight_g: float
-    ai_description: Optional[str] = None  # editable after AI generation
+    tare_weight_g: float = 0
+    ai_description: Optional[str] = None
 
 
 class BowlPatch(BaseModel):
