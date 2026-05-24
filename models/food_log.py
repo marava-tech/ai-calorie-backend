@@ -7,6 +7,7 @@ class MealSlot(str, Enum):
     meal1 = "meal1"
     meal2 = "meal2"
     snack = "snack"
+    supplement = "supplement"
 
 
 class MacroSource(str, Enum):
