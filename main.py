@@ -91,14 +91,35 @@ async def _check_gym_photo_nudge():
             logger.error("Failed to send gym photo nudge FCM: %s", e)
 
 
+async def _send_daily_quiz_reminder():
+    """Send daily 10pm IST check-in reminder (runs at 16:30 UTC)."""
+    db = get_db()
+    profile_doc = await db.user_profile.find_one({})
+    if not profile_doc or not profile_doc.get("fcm_token"):
+        return
+    prefs = profile_doc.get("notification_prefs", {})
+    if not prefs.get("daily_checkin_reminder", True):
+        return
+    try:
+        await fcm_svc.send_notification(
+            profile_doc["fcm_token"],
+            "Time for your daily check-in! 📋",
+            "Log your supplements, gym, and sleep for today.",
+        )
+    except Exception as e:
+        logger.error("Failed to send daily quiz reminder FCM: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _check_env()
     await ensure_indexes()
-    # Sunday at 20:00 — weekly summary FCM
+    # Sunday at 20:00 UTC — weekly summary FCM
     scheduler.add_job(_send_weekly_summary, "cron", day_of_week="sun", hour=20, minute=0)
-    # Daily at 09:00 — gym photo nudge check
+    # Daily at 09:00 UTC — gym photo nudge check
     scheduler.add_job(_check_gym_photo_nudge, "cron", hour=9, minute=0)
+    # Daily at 16:30 UTC (22:00 IST) — daily check-in reminder
+    scheduler.add_job(_send_daily_quiz_reminder, "cron", hour=16, minute=30)
     scheduler.start()
     logger.info("Fitness OS backend started")
     yield
