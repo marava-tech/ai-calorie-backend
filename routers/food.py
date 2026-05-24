@@ -181,13 +181,25 @@ async def create_food_log(body: FoodLogCreate, _: str = Depends(get_current_user
     return doc
 
 
+@router.delete("/logs/{log_id}", status_code=204)
+async def delete_food_log(log_id: str, _: str = Depends(get_current_user)):
+    db = get_db()
+    try:
+        oid = ObjectId(log_id)
+    except Exception:
+        raise HTTPException(400, "Invalid log ID")
+    result = await db.food_logs.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Food log not found")
+
+
 @router.get("/logs")
 async def get_food_logs(date: str, _: str = Depends(get_current_user)):
     """date format: YYYY-MM-DD (query param ?date=)"""
     db = get_db()
     docs = await db.food_logs.find({"date": date}).to_list(None)
 
-    grouped: dict[str, list] = {"meal1": [], "meal2": [], "snack": []}
+    grouped: dict[str, list] = {"meal1": [], "meal2": [], "snack": [], "supplement": []}
     slot_totals: dict[str, dict] = {}
 
     for doc in docs:
