@@ -1,6 +1,9 @@
 """OpenFoodFacts macro lookup — fallback to Gemini if not found."""
+import logging
 import httpx
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
@@ -22,7 +25,8 @@ async def lookup_macros(food_name: str, weight_g: float) -> Optional[dict]:
             resp = await client.get(OFF_SEARCH_URL, params=params)
             resp.raise_for_status()
             data = resp.json()
-    except Exception:
+    except Exception as e:
+        logger.warning("OpenFoodFacts lookup failed for '%s': %s", food_name, e)
         return None
 
     products = data.get("products", [])

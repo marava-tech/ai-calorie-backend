@@ -1,6 +1,6 @@
 """Daily check-in — upsert one record per user per date."""
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -25,6 +25,8 @@ class CheckinCreate(BaseModel):
     multi_vitamin_caps: Optional[int] = None
     whey_protein: Optional[bool] = None
     whey_protein_scoops: Optional[int] = None
+    # Dynamic supplement tracking — key: supplement_id, value: {taken: bool, units: int}
+    supplement_data: Optional[dict[str, Any]] = None
     if_followed: Optional[bool] = None
     gym_photo: Optional[str] = None  # "uploaded" | "skipped"
 
@@ -63,9 +65,11 @@ async def get_checkin(date: str, _: str = Depends(get_current_user)):
 
 
 @router.get("/history")
-async def checkin_history(limit: int = 30, _: str = Depends(get_current_user)):
+async def checkin_history(
+    skip: int = 0, limit: int = 30, _: str = Depends(get_current_user)
+):
     db = get_db()
-    docs = await db.daily_checkins.find({}).sort("date", -1).limit(limit).to_list(None)
+    docs = await db.daily_checkins.find({}).sort("date", -1).skip(skip).limit(limit).to_list(None)
     for d in docs:
         d["id"] = str(d.pop("_id"))
     return docs

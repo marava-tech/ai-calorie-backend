@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from database import get_db
 
 
-async def _consecutive_days(dates: list[str]) -> tuple[int, int]:
+async def consecutive_days(dates: list[str]) -> tuple[int, int]:
     """Returns (current_streak, best_streak) given sorted date strings."""
     if not dates:
         return 0, 0
@@ -23,7 +23,6 @@ async def _consecutive_days(dates: list[str]) -> tuple[int, int]:
         else:
             current = 1
 
-    # Reset current streak if last date is not today or yesterday
     if unique[-1] not in (today, yesterday):
         current = 0
 
@@ -33,25 +32,17 @@ async def _consecutive_days(dates: list[str]) -> tuple[int, int]:
 async def calculate_all_streaks() -> dict:
     db = get_db()
 
-    # Gym streak
     gym_docs = await db.gym_sessions.find({"attended": True}, {"date": 1}).to_list(None)
-    gym_dates = [d["date"] for d in gym_docs]
-    gym_current, gym_best = await _consecutive_days(gym_dates)
+    gym_current, gym_best = await consecutive_days([d["date"] for d in gym_docs])
 
-    # Food logging streak (at least 1 log per day)
     food_docs = await db.food_logs.find({}, {"date": 1}).to_list(None)
-    food_dates = list({d["date"] for d in food_docs})
-    log_current, log_best = await _consecutive_days(food_dates)
+    log_current, log_best = await consecutive_days(list({d["date"] for d in food_docs}))
 
-    # IF streak (no food outside window — derived from if_logs)
     if_docs = await db.if_logs.find({"adhered": True}, {"date": 1}).to_list(None)
-    if_dates = [d["date"] for d in if_docs]
-    if_current, if_best = await _consecutive_days(if_dates)
+    if_current, if_best = await consecutive_days([d["date"] for d in if_docs])
 
-    # Supplement streak (all required supplements taken)
     supp_docs = await db.supplement_logs.find({}, {"date": 1}).to_list(None)
-    supp_dates = list({d["date"] for d in supp_docs})
-    supp_current, supp_best = await _consecutive_days(supp_dates)
+    supp_current, supp_best = await consecutive_days(list({d["date"] for d in supp_docs}))
 
     return {
         "gym": {"current": gym_current, "best": gym_best},

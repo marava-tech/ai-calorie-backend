@@ -1,4 +1,5 @@
 """Body analysis — trend endpoint."""
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from auth import get_current_user
 from database import get_db
@@ -7,11 +8,16 @@ router = APIRouter(prefix="/api/body-analysis", tags=["body-analysis"])
 
 
 @router.get("/trend")
-async def body_fat_trend(_: str = Depends(get_current_user)):
+async def body_fat_trend(days: int = 90, _: str = Depends(get_current_user)):
     """Return time-series of body fat midpoint estimates from gym photo analyses."""
     db = get_db()
+    query = {"photos.analysis": {"$ne": None}}
+    if days > 0:
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        query["date"] = {"$gte": cutoff}
+
     sessions = await db.gym_sessions.find(
-        {"photos.analysis": {"$ne": None}}, {"date": 1, "photos": 1}
+        query, {"date": 1, "photos": 1}
     ).sort("date", 1).to_list(None)
 
     trend = []
@@ -31,6 +37,9 @@ async def body_fat_trend(_: str = Depends(get_current_user)):
                     "bf_low_pct": low,
                     "bf_high_pct": high,
                     "caption": analysis.get("caption", ""),
+                    "image_url": photo.get("image_url"),
                 })
 
     return {"trend": trend}
+
+

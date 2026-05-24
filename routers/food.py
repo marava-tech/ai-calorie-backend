@@ -1,7 +1,9 @@
 """Food logging — AI analysis pipeline + CRUD for logs."""
+import logging
 import uuid
 import base64
 from datetime import datetime, timezone, date
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from bson import ObjectId
 from typing import Optional
@@ -12,6 +14,9 @@ from models.food_log import FoodLogCreate, FoodItem, MacroSource, MealSlot
 from services import gemini as gemini_svc
 from services import minio_client
 from services.openfoodfacts import lookup_macros
+from utils import validate_image_upload
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/food", tags=["food"])
 
@@ -34,13 +39,20 @@ async def _update_if_log(food_date: str, timestamp: datetime, db):
 
     window_start = profile.get("eating_window_start", "13:00")
     window_end = profile.get("eating_window_end", "21:00")
+    tz_name = profile.get("user_timezone", "UTC")
 
     start_h, start_m = map(int, window_start.split(":"))
     end_h, end_m = map(int, window_end.split(":"))
 
-    # Convert UTC timestamp to local naive time for comparison
-    t = timestamp.replace(tzinfo=None)
-    food_time = t.hour * 60 + t.minute
+    # Convert UTC timestamp to the user's local timezone before comparison
+    try:
+        user_tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        logger.warning("Unknown user_timezone '%s', falling back to UTC", tz_name)
+        user_tz = ZoneInfo("UTC")
+
+    local_time = timestamp.astimezone(user_tz)
+    food_time = local_time.hour * 60 + local_time.minute
     window_start_min = start_h * 60 + start_m
     window_end_min = end_h * 60 + end_m
 
@@ -64,6 +76,7 @@ async def analyze_food(
 ):
     db = get_db()
     image_bytes = await photo.read()
+    validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
 
     # Upload to MinIO for storage
     filename = f"{uuid.uuid4()}.jpg"
@@ -74,24 +87,28 @@ async def analyze_food(
     items = analysis.get("items", [])
     scale_weight_g = analysis.get("scale_weight_g")
 
-    # Bowl detection
-    bowls_docs = await db.bowls.find({}).to_list(None)
+    # Bowl detection — only fetch fields needed for AI matching
+    bowls_docs = await db.bowls.find(
+        {}, {"_id": 1, "name": 1, "tare_weight_g": 1, "image_b64": 1}
+    ).to_list(None)
     bowl_match = {}
     if bowls_docs:
-        bowls_for_detection = []
-        for b in bowls_docs:
-            # Fetch bowl image for comparison
-            bowls_for_detection.append({
+        bowls_for_detection = [
+            {
                 "id": str(b["_id"]),
                 "name": b["name"],
                 "tare_weight_g": b["tare_weight_g"],
                 "image_b64": b.get("image_b64", ""),
-            })
+            }
+            for b in bowls_docs
+        ]
         if any(b["image_b64"] for b in bowls_for_detection):
             bowl_match = await gemini_svc.detect_bowl(image_bytes, bowls_for_detection)
 
-    # Saved meal similarity check
-    saved_meals = await db.saved_meals.find({}).to_list(None)
+    # Saved meal similarity check — only fetch name + item names
+    saved_meals = await db.saved_meals.find(
+        {}, {"_id": 1, "name": 1, "items.name": 1}
+    ).to_list(None)
     meal_suggestion = None
     if saved_meals and items:
         detected_names = {item["name"].lower() for item in items}

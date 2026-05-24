@@ -1,13 +1,31 @@
 """Fitness OS — FastAPI backend (port 8850)."""
 import os
+import logging
+import logging.config
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, date, timedelta
 
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from database import get_db
+from database import get_db, ensure_indexes
 from services import fcm as fcm_svc
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+logger = logging.getLogger("fitness_os")
+
+# ─── Required environment variable check ─────────────────────────────────────
+_REQUIRED_ENV = ["MONGODB_URI", "JWT_SECRET", "GEMINI_API_KEY", "FIREBASE_PROJECT_ID"]
+
+def _check_env():
+    missing = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
 from routers import (
     auth_router,
@@ -44,8 +62,8 @@ async def _send_weekly_summary():
                     "Your fitness week is complete — tap to see your summary.",
                     {"week": week},
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Failed to send weekly summary FCM: %s", e)
 
 
 async def _check_gym_photo_nudge():
@@ -69,25 +87,31 @@ async def _check_gym_photo_nudge():
                 "Progress Photo Reminder",
                 "No gym photos in 7 days — capture your progress!",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to send gym photo nudge FCM: %s", e)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _check_env()
+    await ensure_indexes()
     # Sunday at 20:00 — weekly summary FCM
     scheduler.add_job(_send_weekly_summary, "cron", day_of_week="sun", hour=20, minute=0)
     # Daily at 09:00 — gym photo nudge check
     scheduler.add_job(_check_gym_photo_nudge, "cron", hour=9, minute=0)
     scheduler.start()
+    logger.info("Fitness OS backend started")
     yield
     scheduler.shutdown()
+    logger.info("Fitness OS backend stopped")
 
 
 app = FastAPI(
     title="Fitness OS API",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 app.include_router(auth_router.router)

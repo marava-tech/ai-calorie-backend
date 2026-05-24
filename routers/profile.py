@@ -1,6 +1,9 @@
 """User profile — create, read, update + TDEE calculation."""
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from auth import get_current_user
 from database import get_db
@@ -73,8 +76,8 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
                 "Goal Updated",
                 f"Your daily calorie goal changed to {new_goal} kcal",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to send goal update FCM: %s", e)
 
     update_data.update(tdee)
     update_data["updated_at"] = datetime.now(timezone.utc)
