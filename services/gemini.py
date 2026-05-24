@@ -98,18 +98,31 @@ async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
     return {}
 
 
-async def describe_bowl(image_bytes: bytes) -> str:
-    """Generate a visual description for a bowl reference photo."""
+async def analyze_bowl(image_bytes: bytes) -> dict:
+    """
+    Analyze a bowl/container photo for registration as a tare preset.
+    Returns {description, estimated_tare_weight_g, color, shape, material, size_category}
+    """
     prompt = (
-        "Describe this bowl/container concisely for identification purposes. "
-        "Mention: shape, color, size, any distinctive markings. "
-        "Keep it under 40 words. Output ONLY the description text."
+        "Analyze this bowl/container photo for use as a tare-weight preset in a food tracking app.\n"
+        "Return ONLY valid JSON:\n"
+        '{"description": "string", "estimated_tare_weight_g": number or null, '
+        '"color": "string", "shape": "string", "material": "string", "size_category": "small|medium|large"}\n'
+        "- description: concise visual description under 40 words, useful for later identification\n"
+        "- estimated_tare_weight_g: your best estimate of the bowl's empty weight in grams "
+        "(typical ceramic bowls 200-400g, glass 150-300g, plastic 50-150g, small cups 80-180g). "
+        "If a scale is visible in the image, read it. Otherwise estimate from material and size.\n"
+        "- color: dominant color(s) of the bowl\n"
+        "- shape: e.g. round, oval, rectangular, square\n"
+        "- material: ceramic, glass, plastic, metal, wood, etc.\n"
+        "- size_category: small (<500ml), medium (500-1000ml), large (>1000ml)\n"
+        "Output ONLY the JSON."
     )
     response = _get_client().models.generate_content(
         model="gemini-2.0-flash",
         contents=[prompt, _image_part(image_bytes)],
     )
-    return response.text.strip()
+    return _parse_json(response.text)
 
 
 async def analyze_body_photo(
