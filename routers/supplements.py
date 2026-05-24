@@ -1,6 +1,6 @@
 """Supplement tracker — presets + daily logs + streaks + correlation."""
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 from typing import Optional
