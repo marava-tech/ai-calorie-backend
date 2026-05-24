@@ -32,13 +32,14 @@ async def consecutive_days(dates: list[str]) -> tuple[int, int]:
 async def calculate_all_streaks() -> dict:
     db = get_db()
 
-    gym_docs = await db.gym_sessions.find({"attended": True}, {"date": 1}).to_list(None)
+    # Gym and IF streaks come from daily_checkins (logged via daily quiz)
+    gym_docs = await db.daily_checkins.find({"gym": True}, {"date": 1}).to_list(None)
     gym_current, gym_best = await consecutive_days([d["date"] for d in gym_docs])
 
     food_docs = await db.food_logs.find({}, {"date": 1}).to_list(None)
     log_current, log_best = await consecutive_days(list({d["date"] for d in food_docs}))
 
-    if_docs = await db.if_logs.find({"adhered": True}, {"date": 1}).to_list(None)
+    if_docs = await db.daily_checkins.find({"if_followed": True}, {"date": 1}).to_list(None)
     if_current, if_best = await consecutive_days([d["date"] for d in if_docs])
 
     supp_docs = await db.supplement_logs.find({}, {"date": 1}).to_list(None)
