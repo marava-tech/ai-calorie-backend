@@ -7,9 +7,12 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 import bcrypt
 
-SECRET_KEY = os.environ.get("JWT_SECRET", "change-me-in-production")
+_jwt_secret = os.environ.get("JWT_SECRET")
+if not _jwt_secret:
+    raise RuntimeError("JWT_SECRET environment variable is not set")
+SECRET_KEY = _jwt_secret
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_DAYS = 365
+ACCESS_TOKEN_EXPIRE_DAYS = 30
 
 bearer_scheme = HTTPBearer(auto_error=False)
 

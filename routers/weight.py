@@ -1,4 +1,5 @@
 """Weight logs + TDEE recalculation on save."""
+import logging
 from datetime import datetime, timezone, date, timedelta
 from fastapi import APIRouter, Depends
 from auth import get_current_user
@@ -6,6 +7,8 @@ from database import get_db
 from models.weight_log import WeightLogCreate
 from services.tdee import calculate_tdee
 from services.fcm import send_notification
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/weight-logs", tags=["weight"])
 
@@ -36,8 +39,8 @@ async def log_weight(body: WeightLogCreate, _: str = Depends(get_current_user)):
                     "Daily goal updated",
                     f"New weight {body.weight_kg}kg → {tdee['goal_kcal']} kcal/day",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Failed to send weight update FCM: %s", e)
 
     return doc
 

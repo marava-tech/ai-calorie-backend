@@ -17,6 +17,7 @@ class ProfileCreate(BaseModel):
     sex: str  # "male" | "female"
     eating_window_start: str = "13:00"  # HH:MM
     eating_window_end: str = "21:00"
+    user_timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Kolkata"
     notification_prefs: NotificationPrefs = Field(default_factory=NotificationPrefs)
 
 
@@ -27,6 +28,7 @@ class ProfilePatch(BaseModel):
     sex: Optional[str] = None
     eating_window_start: Optional[str] = None
     eating_window_end: Optional[str] = None
+    user_timezone: Optional[str] = None
     notification_prefs: Optional[NotificationPrefs] = None
     fcm_token: Optional[str] = None
 

@@ -1,14 +1,17 @@
 """Bowl preset management — CRUD + AI description generation."""
+import logging
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from bson import ObjectId
 
 from auth import get_current_user
 from database import get_db
 from models.bowl import BowlPatch
 from services import gemini as gemini_svc
 from services import minio_client
+from utils import parse_object_id, validate_image_upload
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/bowls", tags=["bowls"])
 
@@ -28,6 +31,7 @@ async def create_bowl(
 ):
     db = get_db()
     image_bytes = await photo.read()
+    validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
 
     # Upload to MinIO
     filename = f"{uuid.uuid4()}.jpg"
@@ -51,28 +55,32 @@ async def create_bowl(
 
 
 @router.get("")
-async def list_bowls(_: str = Depends(get_current_user)):
+async def list_bowls(
+    skip: int = 0, limit: int = 50, _: str = Depends(get_current_user)
+):
     db = get_db()
-    docs = await db.bowls.find({}).to_list(None)
+    docs = await db.bowls.find({}).skip(skip).limit(limit).to_list(None)
     return [_serialize(d) for d in docs]
 
 
 @router.patch("/{bowl_id}")
 async def update_bowl(bowl_id: str, body: BowlPatch, _: str = Depends(get_current_user)):
     db = get_db()
+    oid = parse_object_id(bowl_id, "bowl_id")
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No fields provided")
-    result = await db.bowls.update_one({"_id": ObjectId(bowl_id)}, {"$set": update_data})
+    result = await db.bowls.update_one({"_id": oid}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(404, "Bowl not found")
-    doc = await db.bowls.find_one({"_id": ObjectId(bowl_id)})
+    doc = await db.bowls.find_one({"_id": oid})
     return _serialize(doc)
 
 
 @router.delete("/{bowl_id}", status_code=204)
 async def delete_bowl(bowl_id: str, _: str = Depends(get_current_user)):
     db = get_db()
-    result = await db.bowls.delete_one({"_id": ObjectId(bowl_id)})
+    oid = parse_object_id(bowl_id, "bowl_id")
+    result = await db.bowls.delete_one({"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(404, "Bowl not found")

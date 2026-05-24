@@ -1,5 +1,6 @@
 """Supplement tracker — presets + daily logs + streaks + correlation."""
-from datetime import datetime, timezone, date, timedelta
+import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 from typing import Optional
@@ -7,6 +8,10 @@ from typing import Optional
 from auth import get_current_user
 from database import get_db
 from models.supplement import SupplementCreate, SupplementPatch, SupplementLogCreate
+from services.streak_calc import consecutive_days
+from utils import parse_object_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/supplements", tags=["supplements"])
 
@@ -34,9 +39,11 @@ async def create_supplement(body: SupplementCreate, _: str = Depends(get_current
 
 
 @router.get("")
-async def list_supplements(_: str = Depends(get_current_user)):
+async def list_supplements(
+    skip: int = 0, limit: int = 50, _: str = Depends(get_current_user)
+):
     db = get_db()
-    docs = await db.supplements.find({}).to_list(None)
+    docs = await db.supplements.find({}).skip(skip).limit(limit).to_list(None)
     return [_serialize(d) for d in docs]
 
 
@@ -45,22 +52,22 @@ async def update_supplement(
     supp_id: str, body: SupplementPatch, _: str = Depends(get_current_user)
 ):
     db = get_db()
+    oid = parse_object_id(supp_id, "supp_id")
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No fields provided")
-    result = await db.supplements.update_one(
-        {"_id": ObjectId(supp_id)}, {"$set": update_data}
-    )
+    result = await db.supplements.update_one({"_id": oid}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(404, "Supplement not found")
-    doc = await db.supplements.find_one({"_id": ObjectId(supp_id)})
+    doc = await db.supplements.find_one({"_id": oid})
     return _serialize(doc)
 
 
 @router.delete("/{supp_id}", status_code=204)
 async def delete_supplement(supp_id: str, _: str = Depends(get_current_user)):
     db = get_db()
-    result = await db.supplements.delete_one({"_id": ObjectId(supp_id)})
+    oid = parse_object_id(supp_id, "supp_id")
+    result = await db.supplements.delete_one({"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(404, "Supplement not found")
 
@@ -70,7 +77,7 @@ async def delete_supplement(supp_id: str, _: str = Depends(get_current_user)):
 @router.post("/logs", status_code=201)
 async def log_supplement(body: SupplementLogCreate, _: str = Depends(get_current_user)):
     db = get_db()
-    supp = await db.supplements.find_one({"_id": ObjectId(body.supplement_id)})
+    supp = await db.supplements.find_one({"_id": parse_object_id(body.supplement_id, "supplement_id")})
     if not supp:
         raise HTTPException(404, "Supplement not found")
 
@@ -108,7 +115,8 @@ async def get_supplement_logs(date_str: str, _: str = Depends(get_current_user))
     db = get_db()
     supplements = await db.supplements.find({}).to_list(None)
     logs = await db.supplement_logs.find({"date": date_str}).to_list(None)
-    taken_ids = {l["supplement_id"] for l in logs}
+    logs_by_id = {l["supplement_id"]: l for l in logs}
+    taken_ids = set(logs_by_id.keys())
 
     today_weekday = date.fromisoformat(date_str).weekday()  # 0=Mon
 
@@ -119,7 +127,7 @@ async def get_supplement_logs(date_str: str, _: str = Depends(get_current_user))
         if s.get("frequency") == "weekly":
             if s.get("day_of_week") != today_weekday:
                 continue
-        log = next((l for l in logs if l["supplement_id"] == sid), None)
+        log = logs_by_id.get(sid)
         checklist.append({
             "supplement_id": sid,
             "name": s["name"],
@@ -137,31 +145,10 @@ async def get_supplement_logs(date_str: str, _: str = Depends(get_current_user))
 async def _update_supplement_streak(supplement_id: str, db):
     logs = await db.supplement_logs.find(
         {"supplement_id": supplement_id}, {"date": 1}
-    ).sort("date", 1).to_list(None)
-
-    dates = sorted({l["date"] for l in logs})
-    if not dates:
-        return
-
-    today = date.today().isoformat()
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
-
-    current = 1
-    best = 1
-    for i in range(1, len(dates)):
-        prev = date.fromisoformat(dates[i - 1])
-        curr = date.fromisoformat(dates[i])
-        if (curr - prev).days == 1:
-            current += 1
-            best = max(best, current)
-        else:
-            current = 1
-
-    if dates[-1] not in (today, yesterday):
-        current = 0
-
+    ).to_list(None)
+    current, best = await consecutive_days([l["date"] for l in logs])
     await db.supplements.update_one(
-        {"_id": ObjectId(supplement_id)},
+        {"_id": parse_object_id(supplement_id, "supplement_id")},
         {"$set": {"current_streak": current, "best_streak": best}},
     )
 
@@ -177,7 +164,7 @@ async def supplement_correlation(
     """Compare sleep quality on supplement-taken nights vs not-taken nights."""
     db = get_db()
 
-    supp = await db.supplements.find_one({"_id": ObjectId(supp_id)})
+    supp = await db.supplements.find_one({"_id": parse_object_id(supp_id, "supp_id")})
     if not supp:
         raise HTTPException(404, "Supplement not found")
 
