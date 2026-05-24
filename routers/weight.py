@@ -48,10 +48,11 @@ async def log_weight(body: WeightLogCreate, _: str = Depends(get_current_user)):
 @router.get("")
 async def get_weight_logs(days: int = 90, _: str = Depends(get_current_user)):
     db = get_db()
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
-    docs = await db.weight_logs.find(
-        {"date": {"$gte": cutoff}}
-    ).sort("date", 1).to_list(None)
+    query: dict = {}
+    if days > 0:
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        query["date"] = {"$gte": cutoff}
+    docs = await db.weight_logs.find(query).sort("date", 1).to_list(None)
     for d in docs:
         d["_id"] = str(d["_id"])
     return {"logs": docs}
