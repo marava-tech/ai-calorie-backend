@@ -182,10 +182,10 @@ async def create_food_log(body: FoodLogCreate, _: str = Depends(get_current_user
 
 
 @router.get("/logs")
-async def get_food_logs(date_str: str, _: str = Depends(get_current_user)):
-    """date_str format: YYYY-MM-DD (query param ?date=)"""
+async def get_food_logs(date: str, _: str = Depends(get_current_user)):
+    """date format: YYYY-MM-DD (query param ?date=)"""
     db = get_db()
-    docs = await db.food_logs.find({"date": date_str}).to_list(None)
+    docs = await db.food_logs.find({"date": date}).to_list(None)
 
     grouped: dict[str, list] = {"meal1": [], "meal2": [], "snack": []}
     slot_totals: dict[str, dict] = {}
@@ -207,7 +207,7 @@ async def get_food_logs(date_str: str, _: str = Depends(get_current_user)):
         slot_totals[slot] = {k: round(v, 1) for k, v in t.items()}
 
     return {
-        "date": date_str,
+        "date": date,
         "entries": grouped,
         "slot_totals": slot_totals,
         "day_total": {k: round(v, 1) for k, v in day_total.items()},
