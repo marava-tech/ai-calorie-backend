@@ -1,8 +1,11 @@
 """Weekly summary aggregation."""
+import logging
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from auth import get_current_user
 from database import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/summary", tags=["summary"])
 
@@ -21,9 +24,10 @@ async def weekly_summary(week: str, _: str = Depends(get_current_user)):
     try:
         # Normalize: "YYYY-WW" or "YYYY-WN"
         if "-W" not in week:
-            raise ValueError
+            raise ValueError("missing -W separator")
         start_date, end_date = _week_dates(week)
-    except Exception:
+    except (ValueError, TypeError) as e:
+        logger.debug("Invalid week param '%s': %s", week, e)
         raise HTTPException(400, "Invalid week format. Use YYYY-WN (e.g. 2026-W21)")
 
     db = get_db()
