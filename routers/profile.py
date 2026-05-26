@@ -68,6 +68,12 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     merged = {**doc, **update_data}
     tdee = calculate_tdee(merged["weight_kg"], merged["height_cm"], merged["age"], merged["sex"])
 
+    # If user explicitly overrode macro/calorie goals, keep their values
+    macro_overrides = ("goal_kcal", "protein_g", "carbs_g", "fat_g")
+    for field in macro_overrides:
+        if field in update_data:
+            tdee[field] = update_data[field]
+
     old_goal = doc.get("goal_kcal", 0)
     new_goal = tdee["goal_kcal"]
     if abs(new_goal - old_goal) > 50 and doc.get("fcm_token"):
