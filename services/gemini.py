@@ -1,4 +1,5 @@
 """Gemini Flash vision calls — food analysis, bowl detection, body analysis."""
+import asyncio
 import os
 import base64
 import json
@@ -29,6 +30,12 @@ def _parse_json(text: str) -> dict:
     return json.loads(text)
 
 
+def _generate(model: str, contents) -> str:
+    """Synchronous Gemini call — always run via asyncio.to_thread."""
+    response = _get_client().models.generate_content(model=model, contents=contents)
+    return response.text
+
+
 async def analyze_food(image_bytes: bytes) -> dict:
     """Return {items: [{name, estimated_weight_g}], scale_weight_g: float|None}"""
     prompt = (
@@ -41,11 +48,10 @@ async def analyze_food(image_bytes: bytes) -> dict:
         "otherwise null.\n"
         "Output ONLY the JSON, no other text."
     )
-    response = _get_client().models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[prompt, _image_part(image_bytes)],
+    text = await asyncio.to_thread(
+        _generate, "gemini-2.0-flash", [prompt, _image_part(image_bytes)]
     )
-    return _parse_json(response.text)
+    return _parse_json(text)
 
 
 async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
@@ -77,11 +83,8 @@ async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
     )
 
     content = [prompt] + parts + [_image_part(food_image_bytes)]
-    response = _get_client().models.generate_content(
-        model="gemini-2.0-flash",
-        contents=content,
-    )
-    result = _parse_json(response.text)
+    text = await asyncio.to_thread(_generate, "gemini-2.0-flash", content)
+    result = _parse_json(text)
 
     matched_id = result.get("matched_bowl_id")
     confidence = float(result.get("confidence", 0.0))
@@ -118,11 +121,10 @@ async def analyze_bowl(image_bytes: bytes) -> dict:
         "- size_category: small (<500ml), medium (500-1000ml), large (>1000ml)\n"
         "Output ONLY the JSON."
     )
-    response = _get_client().models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[prompt, _image_part(image_bytes)],
+    text = await asyncio.to_thread(
+        _generate, "gemini-2.0-flash", [prompt, _image_part(image_bytes)]
     )
-    return _parse_json(response.text)
+    return _parse_json(text)
 
 
 async def analyze_body_photo(
@@ -158,11 +160,8 @@ async def analyze_body_photo(
         images.append(_image_part(prev_image_bytes))
     images.append(_image_part(current_image_bytes))
 
-    response = _get_client().models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[prompt] + images,
-    )
-    return _parse_json(response.text)
+    text = await asyncio.to_thread(_generate, "gemini-2.0-flash", [prompt] + images)
+    return _parse_json(text)
 
 
 async def estimate_macros(food_name: str, weight_g: float) -> dict:
@@ -173,8 +172,5 @@ async def estimate_macros(food_name: str, weight_g: float) -> dict:
         '{"calories_kcal": number, "protein_g": number, "carbs_g": number, "fat_g": number}\n'
         "Output ONLY the JSON."
     )
-    response = _get_client().models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[prompt],
-    )
-    return _parse_json(response.text)
+    text = await asyncio.to_thread(_generate, "gemini-2.0-flash", [prompt])
+    return _parse_json(text)

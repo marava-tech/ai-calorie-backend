@@ -2,7 +2,7 @@
 import logging
 import uuid
 import base64
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from bson import ObjectId
@@ -224,3 +224,35 @@ async def get_food_logs(date: str, _: str = Depends(get_current_user)):
         "slot_totals": slot_totals,
         "day_total": {k: round(v, 1) for k, v in day_total.items()},
     }
+
+
+@router.get("/daily-totals")
+async def get_daily_totals(days: int = 30, _: str = Depends(get_current_user)):
+    """Returns daily aggregated calories + protein for the past N days."""
+    db = get_db()
+    today = date.today()
+    if days > 0:
+        start = (today - timedelta(days=days - 1)).isoformat()
+        query: dict = {"date": {"$gte": start, "$lte": today.isoformat()}}
+    else:
+        query = {}
+
+    docs = await db.food_logs.find(query).to_list(None)
+    day_map: dict[str, dict] = {}
+    for doc in docs:
+        d = doc.get("date", "")
+        if d not in day_map:
+            day_map[d] = {"calories_kcal": 0.0, "protein_g": 0.0}
+        t = doc.get("totals", {})
+        day_map[d]["calories_kcal"] += t.get("calories_kcal", 0)
+        day_map[d]["protein_g"] += t.get("protein_g", 0)
+
+    result = sorted([
+        {
+            "date": d,
+            "calories_kcal": round(v["calories_kcal"], 1),
+            "protein_g": round(v["protein_g"], 1),
+        }
+        for d, v in day_map.items()
+    ], key=lambda x: x["date"])
+    return {"totals": result}

@@ -1,6 +1,7 @@
 """User profile — create, read, update + TDEE calculation."""
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,8 @@ from database import get_db
 from models.profile import ProfileCreate, ProfilePatch
 from services.tdee import calculate_tdee
 from services.fcm import send_notification
+from services import minio_client
+from utils import validate_image_upload
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -54,11 +57,10 @@ async def get_profile(_: str = Depends(get_current_user)):
 @router.patch("")
 async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     db = get_db()
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No fields provided")
 
-    # Refetch profile to recalculate TDEE if weight changes
     doc = await db.user_profile.find_one({})
     if not doc:
         raise HTTPException(404, "Profile not found")
@@ -66,7 +68,6 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     merged = {**doc, **update_data}
     tdee = calculate_tdee(merged["weight_kg"], merged["height_cm"], merged["age"], merged["sex"])
 
-    # Check if goal changed significantly
     old_goal = doc.get("goal_kcal", 0)
     new_goal = tdee["goal_kcal"]
     if abs(new_goal - old_goal) > 50 and doc.get("fcm_token"):
@@ -86,3 +87,20 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     updated = await db.user_profile.find_one({})
     updated["_id"] = str(updated["_id"])
     return updated
+
+
+@router.post("/photo")
+async def upload_profile_photo(
+    photo: UploadFile = File(...),
+    _: str = Depends(get_current_user),
+):
+    """Upload profile picture via upload-api; stores URL in user_profile.photo_url."""
+    db = get_db()
+    image_bytes = await photo.read()
+    validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
+
+    filename = f"profile_{uuid.uuid4()}.jpg"
+    photo_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_PROFILE, filename)
+
+    await db.user_profile.update_one({}, {"$set": {"photo_url": photo_url}})
+    return {"photo_url": photo_url}

@@ -10,6 +10,13 @@ class NotificationPrefs(BaseModel):
     weekly_summary: bool = True
 
 
+class SleepThresholds(BaseModel):
+    worst_max: float = 4.0   # < this → worst
+    bad_max: float = 6.0     # < this → bad
+    average_max: float = 7.0 # < this → average
+    good_max: float = 8.0    # < this → good; >= this → better
+
+
 class ProfileCreate(BaseModel):
     height_cm: float
     weight_kg: float
@@ -19,6 +26,9 @@ class ProfileCreate(BaseModel):
     eating_window_end: str = "21:00"
     user_timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Kolkata"
     notification_prefs: NotificationPrefs = Field(default_factory=NotificationPrefs)
+    gym_streak_min_days_per_week: int = 5
+    sleep_thresholds: SleepThresholds = Field(default_factory=SleepThresholds)
+    photo_url: Optional[str] = None
 
 
 class ProfilePatch(BaseModel):
@@ -31,6 +41,9 @@ class ProfilePatch(BaseModel):
     user_timezone: Optional[str] = None
     notification_prefs: Optional[NotificationPrefs] = None
     fcm_token: Optional[str] = None
+    gym_streak_min_days_per_week: Optional[int] = None
+    sleep_thresholds: Optional[SleepThresholds] = None
+    photo_url: Optional[str] = None
 
 
 class TDEEResult(BaseModel):

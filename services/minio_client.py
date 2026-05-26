@@ -9,6 +9,7 @@ BUCKET = "ai-calorie-counter"
 BUCKET_FOOD = BUCKET
 BUCKET_GYM = BUCKET
 BUCKET_BOWL = BUCKET
+BUCKET_PROFILE = BUCKET
 
 
 async def upload_image(image_bytes: bytes, bucket: str, filename: str) -> str:
