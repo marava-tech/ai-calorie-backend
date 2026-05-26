@@ -68,11 +68,25 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     merged = {**doc, **update_data}
     tdee = calculate_tdee(merged["weight_kg"], merged["height_cm"], merged["age"], merged["sex"])
 
-    # If user explicitly overrode macro/calorie goals, keep their values
-    macro_overrides = ("goal_kcal", "protein_g", "carbs_g", "fat_g")
-    for field in macro_overrides:
+    # Preserve user-overridden macro/calorie goals across any PATCH.
+    # - If the user is explicitly setting a goal field NOW  → use that value and mark it overridden.
+    # - If the user previously overrode a goal field (stored in doc["goal_overrides"])
+    #   and is NOT changing it this time → restore the saved value so TDEE recalc doesn't wipe it.
+    macro_fields = ("goal_kcal", "protein_g", "carbs_g", "fat_g")
+    existing_overrides: set[str] = set(doc.get("goal_overrides") or [])
+
+    for field in macro_fields:
         if field in update_data:
+            # Explicit override in this request — honour it and record it.
             tdee[field] = update_data[field]
+            existing_overrides.add(field)
+        elif field in existing_overrides:
+            # Previously overridden — restore saved value so TDEE doesn't reset it.
+            if field in doc:
+                tdee[field] = doc[field]
+
+    # Persist the current set of overridden fields.
+    update_data["goal_overrides"] = list(existing_overrides)
 
     old_goal = doc.get("goal_kcal", 0)
     new_goal = tdee["goal_kcal"]
