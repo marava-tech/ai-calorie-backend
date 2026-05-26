@@ -38,7 +38,7 @@ from routers import (
     body_analysis,
     body_photos,
     sleep,
-    weight,
+    weight_photos,
     streaks,
     summary,
     notifications,
@@ -146,7 +146,7 @@ app.include_router(gym.router)
 app.include_router(body_analysis.router)
 app.include_router(body_photos.router)
 app.include_router(sleep.router)
-app.include_router(weight.router)
+app.include_router(weight_photos.router)
 app.include_router(streaks.router)
 app.include_router(summary.router)
 app.include_router(notifications.router)

@@ -58,7 +58,7 @@ async def get_day_summary(date: str, _: str = Depends(get_current_user)):
             if isinstance(sval, dict) and sval.get("taken"):
                 supp_names.append(sid)
 
-    weight_doc = await db.weight_logs.find_one({"date": date})
+    weight_doc = await db.weight_photos.find_one({"date": date, "weight_kg": {"$ne": None}})
     weight_summary = {"weight_kg": weight_doc["weight_kg"]} if weight_doc else None
 
     if_doc = await db.if_logs.find_one({"date": date})
@@ -137,7 +137,7 @@ async def weekly_summary(week: str, _: str = Depends(get_current_user)):
         sleep_breakdown[q] = sleep_breakdown.get(q, 0) + 1
 
     # Weight delta
-    weight_logs = await db.weight_logs.find(date_filter).sort("date", 1).to_list(None)
+    weight_logs = await db.weight_photos.find({**date_filter, "weight_kg": {"$ne": None}}).sort("date", 1).to_list(None)
     weight_delta = None
     if len(weight_logs) >= 2:
         weight_delta = round(weight_logs[-1]["weight_kg"] - weight_logs[0]["weight_kg"], 2)
