@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger("fitness_os")
 
 # ─── Required environment variable check ─────────────────────────────────────
-_REQUIRED_ENV = ["MONGODB_URI", "JWT_SECRET", "GEMINI_API_KEY", "FIREBASE_PROJECT_ID"]
+_REQUIRED_ENV = ["MONGODB_URI", "JWT_SECRET", "OPENROUTER_API_KEY", "FIREBASE_PROJECT_ID"]
 
 def _check_env():
     missing = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
