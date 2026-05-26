@@ -179,6 +179,13 @@ async def create_food_log(body: FoodLogCreate, _: str = Depends(get_current_user
         },
         "created_at": now,
     }
+
+    # Supplements are submitted once per day from the daily quiz.
+    # Replace any existing supplement entries for today to prevent duplicates
+    # when the user re-submits the quiz.
+    if body.meal_slot == MealSlot.supplement:
+        await db.food_logs.delete_many({"date": food_date, "meal_slot": MealSlot.supplement.value})
+
     result = await db.food_logs.insert_one(doc)
 
     await _update_if_log(food_date, now, db)
