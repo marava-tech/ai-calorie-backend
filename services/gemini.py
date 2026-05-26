@@ -49,7 +49,7 @@ async def analyze_food(image_bytes: bytes) -> dict:
         "Output ONLY the JSON, no other text."
     )
     text = await asyncio.to_thread(
-        _generate, "gemini-2.0-flash", [prompt, _image_part(image_bytes)]
+        _generate, "gemini-2.0-flash-lite", [prompt, _image_part(image_bytes)]
     )
     return _parse_json(text)
 
@@ -83,7 +83,7 @@ async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
     )
 
     content = [prompt] + parts + [_image_part(food_image_bytes)]
-    text = await asyncio.to_thread(_generate, "gemini-2.0-flash", content)
+    text = await asyncio.to_thread(_generate, "gemini-2.0-flash-lite", content)
     result = _parse_json(text)
 
     matched_id = result.get("matched_bowl_id")
@@ -122,7 +122,7 @@ async def analyze_bowl(image_bytes: bytes) -> dict:
         "Output ONLY the JSON."
     )
     text = await asyncio.to_thread(
-        _generate, "gemini-2.0-flash", [prompt, _image_part(image_bytes)]
+        _generate, "gemini-2.0-flash-lite", [prompt, _image_part(image_bytes)]
     )
     return _parse_json(text)
 
@@ -160,7 +160,7 @@ async def analyze_body_photo(
         images.append(_image_part(prev_image_bytes))
     images.append(_image_part(current_image_bytes))
 
-    text = await asyncio.to_thread(_generate, "gemini-2.0-flash", [prompt] + images)
+    text = await asyncio.to_thread(_generate, "gemini-2.0-flash-lite", [prompt] + images)
     return _parse_json(text)
 
 
@@ -172,5 +172,5 @@ async def estimate_macros(food_name: str, weight_g: float) -> dict:
         '{"calories_kcal": number, "protein_g": number, "carbs_g": number, "fat_g": number}\n'
         "Output ONLY the JSON."
     )
-    text = await asyncio.to_thread(_generate, "gemini-2.0-flash", [prompt])
+    text = await asyncio.to_thread(_generate, "gemini-2.0-flash-lite", [prompt])
     return _parse_json(text)
