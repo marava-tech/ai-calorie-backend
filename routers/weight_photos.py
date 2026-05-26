@@ -1,0 +1,104 @@
+"""Progress weight photos — single source of truth for all weight data."""
+import logging
+import uuid
+from datetime import datetime, timezone, date, timedelta
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+
+from auth import get_current_user
+from database import get_db
+from services import minio_client
+from services.tdee import calculate_tdee
+from services.fcm import send_notification
+from utils import validate_image_upload
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/weight-photos", tags=["weight-photos"])
+
+
+@router.post("", status_code=201)
+async def upload_weight_photo(
+    photo_date: str = Form(...),
+    weight_kg: Optional[float] = Form(None),
+    photo: Optional[UploadFile] = File(None),
+    username: str = Depends(get_current_user),
+):
+    if weight_kg is None and (photo is None or photo.size == 0):
+        raise HTTPException(status_code=422, detail="At least one of weight_kg or photo must be provided")
+
+    db = get_db()
+    image_url: Optional[str] = None
+
+    if photo and photo.filename:
+        image_bytes = await photo.read()
+        validate_image_upload(image_bytes, photo.filename, photo.content_type)
+        filename = f"{uuid.uuid4()}.jpg"
+        image_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_GYM, filename)
+
+    photo_id = str(uuid.uuid4())
+    doc = {
+        "photo_id": photo_id,
+        "date": photo_date,
+        "weight_kg": weight_kg,
+        "image_url": image_url,
+        "created_at": datetime.now(timezone.utc),
+    }
+    await db.weight_photos.insert_one(doc)
+    doc["_id"] = str(doc.pop("_id", photo_id))
+
+    # Recalculate TDEE when weight is provided, but preserve any custom goal overrides.
+    if weight_kg is not None:
+        try:
+            profile = await db.user_profile.find_one({})
+            if profile:
+                old_goal = profile.get("goal_kcal", 0)
+                tdee = calculate_tdee(weight_kg, profile["height_cm"], profile["age"], profile["sex"])
+
+                # Restore user-overridden goal fields so a new weight log doesn't wipe them.
+                overrides: set[str] = set(profile.get("goal_overrides") or [])
+                for field in ("goal_kcal", "protein_g", "carbs_g", "fat_g"):
+                    if field in overrides and field in profile:
+                        tdee[field] = profile[field]
+
+                await db.user_profile.update_one(
+                    {}, {"$set": {**tdee, "weight_kg": weight_kg}}
+                )
+                if abs(tdee["goal_kcal"] - old_goal) > 50 and profile.get("fcm_token"):
+                    try:
+                        await send_notification(
+                            profile["fcm_token"],
+                            "Daily goal updated",
+                            f"New weight {weight_kg}kg → {tdee['goal_kcal']} kcal/day",
+                        )
+                    except Exception as e:
+                        logger.error("Failed to send weight update FCM: %s", e)
+        except Exception as e:
+            logger.error("TDEE recalculation failed: %s", e)
+
+    return doc
+
+
+@router.get("")
+async def list_weight_photos(
+    days: int = 0,
+    limit: int = 50,
+    _: str = Depends(get_current_user),
+):
+    db = get_db()
+    query: dict = {}
+    if days > 0:
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        query["date"] = {"$gte": cutoff}
+    docs = await db.weight_photos.find(query).sort("date", -1).limit(limit).to_list(None)
+    for d in docs:
+        d["_id"] = str(d["_id"])
+    return {"photos": docs}
+
+
+@router.delete("/{photo_id}", status_code=204)
+async def delete_weight_photo(photo_id: str, _: str = Depends(get_current_user)):
+    db = get_db()
+    result = await db.weight_photos.delete_one({"photo_id": photo_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Weight photo not found")
