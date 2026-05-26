@@ -9,8 +9,8 @@ from typing import Optional
 import httpx
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_VISION_MODEL = os.environ.get("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct:free")
-_TEXT_MODEL = os.environ.get("OPENROUTER_TEXT_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+_VISION_MODEL = os.environ.get("OPENROUTER_VISION_MODEL", "google/gemini-2.0-flash-001")
+_TEXT_MODEL = os.environ.get("OPENROUTER_TEXT_MODEL", "google/gemini-2.0-flash-001")
 
 
 def _api_key() -> str:
