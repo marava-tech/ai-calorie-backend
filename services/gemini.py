@@ -1,26 +1,33 @@
-"""Gemini Flash vision calls — food analysis, bowl detection, body analysis."""
+"""LLM vision calls via OpenRouter — food analysis, bowl detection, body analysis."""
 import asyncio
-import os
 import base64
 import json
+import os
 import re
 from typing import Optional
 
-from google import genai
-from google.genai import types
+import httpx
 
-_client: genai.Client | None = None
-
-
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    return _client
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+_VISION_MODEL = os.environ.get("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct:free")
+_TEXT_MODEL = os.environ.get("OPENROUTER_TEXT_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
 
 
-def _image_part(image_bytes: bytes, mime: str = "image/jpeg") -> types.Part:
-    return types.Part.from_bytes(data=image_bytes, mime_type=mime)
+def _api_key() -> str:
+    return os.environ["OPENROUTER_API_KEY"]
+
+
+def _headers() -> dict:
+    return {
+        "Authorization": f"Bearer {_api_key()}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://fitness-backend.marava.tech",
+    }
+
+
+def _img_url(image_bytes: bytes, mime: str = "image/jpeg") -> str:
+    b64 = base64.b64encode(image_bytes).decode()
+    return f"data:{mime};base64,{b64}"
 
 
 def _parse_json(text: str) -> dict:
@@ -30,10 +37,15 @@ def _parse_json(text: str) -> dict:
     return json.loads(text)
 
 
-def _generate(model: str, contents) -> str:
-    """Synchronous Gemini call — always run via asyncio.to_thread."""
-    response = _get_client().models.generate_content(model=model, contents=contents)
-    return response.text
+async def _chat(model: str, messages: list[dict]) -> str:
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            _OPENROUTER_URL,
+            headers=_headers(),
+            json={"model": model, "messages": messages},
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
 
 
 async def analyze_food(image_bytes: bytes) -> dict:
@@ -44,13 +56,14 @@ async def analyze_food(image_bytes: bytes) -> dict:
         '"scale_weight_g": number or null}\n'
         "- List every distinct food item visible.\n"
         "- estimated_weight_g: your best estimate for that item's weight in grams.\n"
-        "- scale_weight_g: if a kitchen scale display is visible, read the number shown; "
-        "otherwise null.\n"
+        "- scale_weight_g: if a kitchen scale display is visible, read the number; otherwise null.\n"
         "Output ONLY the JSON, no other text."
     )
-    text = await asyncio.to_thread(
-        _generate, "gemini-2.0-flash-lite", [prompt, _image_part(image_bytes)]
-    )
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": _img_url(image_bytes)}},
+    ]}]
+    text = await _chat(_VISION_MODEL, messages)
     return _parse_json(text)
 
 
@@ -62,28 +75,23 @@ async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
     if not bowls:
         return {}
 
-    parts = []
-    bowl_desc = []
-    for i, b in enumerate(bowls):
-        label = f"Bowl {i+1}: {b['name']} (ID: {b['id']})"
-        bowl_desc.append(label)
-        parts.append(label)
-        parts.append(_image_part(base64.b64decode(b["image_b64"])))
-
-    bowl_list = "\n".join(bowl_desc)
+    bowl_desc = "\n".join(f"Bowl {i+1}: {b['name']} (ID: {b['id']})" for i, b in enumerate(bowls))
     prompt = (
-        f"I have {len(bowls)} pre-registered bowl presets shown above, followed by a food photo.\n"
-        f"Bowl presets:\n{bowl_list}\n\n"
-        "Look at the LAST image (the food photo). Does it contain one of these bowls?\n"
+        f"I have {len(bowls)} pre-registered bowl presets, followed by a food photo.\n"
+        f"Bowl presets:\n{bowl_desc}\n\n"
+        "Does the food photo contain one of these bowls?\n"
         "Return ONLY valid JSON:\n"
         '{"matched_bowl_id": "string or null", "confidence": 0.0-1.0, "reason": "string"}\n'
-        "- matched_bowl_id: the ID of the matching bowl, or null if none found.\n"
-        "- confidence: how confident you are (0.0-1.0).\n"
         "Output ONLY the JSON."
     )
 
-    content = [prompt] + parts + [_image_part(food_image_bytes)]
-    text = await asyncio.to_thread(_generate, "gemini-2.0-flash-lite", content)
+    content: list = [{"type": "text", "text": prompt}]
+    for b in bowls:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b['image_b64']}"}})
+    content.append({"type": "image_url", "image_url": {"url": _img_url(food_image_bytes)}})
+
+    messages = [{"role": "user", "content": content}]
+    text = await _chat(_VISION_MODEL, messages)
     result = _parse_json(text)
 
     matched_id = result.get("matched_bowl_id")
@@ -102,28 +110,23 @@ async def detect_bowl(food_image_bytes: bytes, bowls: list[dict]) -> dict:
 
 
 async def analyze_bowl(image_bytes: bytes) -> dict:
-    """
-    Analyze a bowl/container photo for registration as a tare preset.
-    Returns {description, estimated_tare_weight_g, color, shape, material, size_category}
-    """
+    """Returns {description, estimated_tare_weight_g, color, shape, material, size_category}"""
     prompt = (
         "Analyze this bowl/container photo for use as a tare-weight preset in a food tracking app.\n"
         "Return ONLY valid JSON:\n"
         '{"description": "string", "estimated_tare_weight_g": number or null, '
         '"color": "string", "shape": "string", "material": "string", "size_category": "small|medium|large"}\n'
-        "- description: concise visual description under 40 words, useful for later identification\n"
-        "- estimated_tare_weight_g: your best estimate of the bowl's empty weight in grams "
-        "(typical ceramic bowls 200-400g, glass 150-300g, plastic 50-150g, small cups 80-180g). "
-        "If a scale is visible in the image, read it. Otherwise estimate from material and size.\n"
-        "- color: dominant color(s) of the bowl\n"
-        "- shape: e.g. round, oval, rectangular, square\n"
-        "- material: ceramic, glass, plastic, metal, wood, etc.\n"
+        "- description: concise visual description under 40 words\n"
+        "- estimated_tare_weight_g: best estimate of empty weight in grams. "
+        "If a scale is visible read it; otherwise estimate from material and size.\n"
         "- size_category: small (<500ml), medium (500-1000ml), large (>1000ml)\n"
         "Output ONLY the JSON."
     )
-    text = await asyncio.to_thread(
-        _generate, "gemini-2.0-flash-lite", [prompt, _image_part(image_bytes)]
-    )
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": _img_url(image_bytes)}},
+    ]}]
+    text = await _chat(_VISION_MODEL, messages)
     return _parse_json(text)
 
 
@@ -133,34 +136,26 @@ async def analyze_body_photo(
     angle: str,
 ) -> dict:
     """Returns {caption, bf_low_pct, bf_high_pct}"""
-    context = (
-        "You are analyzing physique photos for body composition tracking. "
-        "This is a personal fitness tool.\n\n"
-    )
+    context = "You are analyzing physique photos for body composition tracking. This is a personal fitness tool.\n\n"
     if prev_image_bytes:
-        context += (
-            "The FIRST image is a previous photo from the same angle for comparison. "
-            "The SECOND image is the current photo being analyzed.\n\n"
-        )
+        context += "The FIRST image is a previous photo for comparison. The SECOND image is the current photo.\n\n"
 
     prompt = (
         f"{context}"
-        f"Analyze the {angle} view photo. Provide:\n"
-        "1. Estimated body fat % range (realistic, not flattering)\n"
-        "2. Brief visual observations (muscle definition, changes vs previous if available)\n\n"
-        "Return ONLY valid JSON:\n"
+        f"Analyze the {angle} view photo. Return ONLY valid JSON:\n"
         '{"bf_low_pct": number, "bf_high_pct": number, "caption": "string"}\n'
-        "- bf_low_pct / bf_high_pct: numeric body fat % range estimate\n"
-        "- caption: 1-2 sentence visual observation, objective tone\n"
+        "- bf_low_pct / bf_high_pct: realistic body fat % range estimate\n"
+        "- caption: 1-2 sentence objective visual observation\n"
         "Output ONLY the JSON."
     )
 
-    images = []
+    content: list = [{"type": "text", "text": prompt}]
     if prev_image_bytes:
-        images.append(_image_part(prev_image_bytes))
-    images.append(_image_part(current_image_bytes))
+        content.append({"type": "image_url", "image_url": {"url": _img_url(prev_image_bytes)}})
+    content.append({"type": "image_url", "image_url": {"url": _img_url(current_image_bytes)}})
 
-    text = await asyncio.to_thread(_generate, "gemini-2.0-flash-lite", [prompt] + images)
+    messages = [{"role": "user", "content": content}]
+    text = await _chat(_VISION_MODEL, messages)
     return _parse_json(text)
 
 
@@ -172,5 +167,6 @@ async def estimate_macros(food_name: str, weight_g: float) -> dict:
         '{"calories_kcal": number, "protein_g": number, "carbs_g": number, "fat_g": number}\n'
         "Output ONLY the JSON."
     )
-    text = await asyncio.to_thread(_generate, "gemini-2.0-flash-lite", [prompt])
+    messages = [{"role": "user", "content": prompt}]
+    text = await _chat(_TEXT_MODEL, messages)
     return _parse_json(text)
