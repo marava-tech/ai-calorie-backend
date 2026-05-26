@@ -129,8 +129,14 @@ async def analyze_food(
                 "overlap": round(best_overlap, 2),
             }
 
+    # Resolve macros for each detected item so the review screen shows real values
+    enriched_items = []
+    for item in items:
+        macros = await _resolve_macros(item["name"], item["estimated_weight_g"])
+        enriched_items.append({**item, **macros})
+
     return {
-        "items": items,
+        "items": enriched_items,
         "bowl_match": bowl_match or None,
         "scale_weight_g": scale_weight_g,
         "image_url": image_url,
