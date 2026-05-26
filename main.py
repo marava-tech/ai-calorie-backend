@@ -36,6 +36,7 @@ from routers import (
     supplements,
     gym,
     body_analysis,
+    body_photos,
     sleep,
     weight,
     streaks,
@@ -143,6 +144,7 @@ app.include_router(saved_meals.router)
 app.include_router(supplements.router)
 app.include_router(gym.router)
 app.include_router(body_analysis.router)
+app.include_router(body_photos.router)
 app.include_router(sleep.router)
 app.include_router(weight.router)
 app.include_router(streaks.router)

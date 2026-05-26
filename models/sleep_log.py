@@ -12,4 +12,4 @@ class SleepQuality(str, Enum):
 
 class SleepLogCreate(BaseModel):
     date: str           # YYYY-MM-DD (night of sleep)
-    quality: SleepQuality
+    hours_slept: float  # quality is auto-derived from this

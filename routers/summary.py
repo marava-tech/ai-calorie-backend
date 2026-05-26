@@ -1,4 +1,4 @@
-"""Weekly summary aggregation."""
+"""Summary aggregation — daily and weekly views."""
 import logging
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +8,71 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/summary", tags=["summary"])
+
+
+@router.get("")
+async def get_day_summary(date: str, _: str = Depends(get_current_user)):
+    """date format: YYYY-MM-DD — returns all tracked data for that day."""
+    db = get_db()
+
+    food_docs = await db.food_logs.find({"date": date}).to_list(None)
+    food_totals = {"calories_kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
+    for doc in food_docs:
+        t = doc.get("totals", {})
+        for k in food_totals:
+            food_totals[k] += t.get(k, 0)
+    food_summary = {k: round(v, 1) for k, v in food_totals.items()}
+    food_summary["entries_count"] = len(food_docs)
+
+    sleep_doc = await db.sleep_logs.find_one({"date": date})
+    sleep_summary = None
+    if sleep_doc:
+        sleep_summary = {
+            "hours_slept": sleep_doc.get("hours_slept"),
+            "quality": sleep_doc.get("quality"),
+        }
+
+    gym_session = await db.gym_sessions.find_one({"date": date, "attended": True})
+    checkin = await db.daily_checkins.find_one({"date": date})
+    gym_attended = bool(gym_session) or bool((checkin or {}).get("gym"))
+    workout_type = None
+    if gym_session:
+        workout_type = gym_session.get("workout_type")
+    elif checkin:
+        workout_type = checkin.get("workout_type")
+
+    supp_names = []
+    if checkin:
+        supplement_map = {
+            "fish_oil": "Fish Oil",
+            "magnesium": "Magnesium",
+            "vitamin_d3": "Vitamin D3",
+            "multi_vitamin": "Multi Vitamin",
+            "whey_protein": "Whey Protein",
+        }
+        for key, label in supplement_map.items():
+            if checkin.get(key):
+                supp_names.append(label)
+        supp_data = checkin.get("supplement_data") or {}
+        for sid, sval in supp_data.items():
+            if isinstance(sval, dict) and sval.get("taken"):
+                supp_names.append(sid)
+
+    weight_doc = await db.weight_logs.find_one({"date": date})
+    weight_summary = {"weight_kg": weight_doc["weight_kg"]} if weight_doc else None
+
+    if_doc = await db.if_logs.find_one({"date": date})
+    if_summary = {"adhered": if_doc["adhered"]} if if_doc else None
+
+    return {
+        "date": date,
+        "food": food_summary,
+        "sleep": sleep_summary,
+        "gym": {"attended": gym_attended, "workout_type": workout_type},
+        "supplements": supp_names,
+        "weight": weight_summary,
+        "if_log": if_summary,
+    }
 
 
 def _week_dates(week_str: str) -> tuple[str, str]:

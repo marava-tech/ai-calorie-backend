@@ -7,6 +7,7 @@ class WorkoutType(str, Enum):
     push = "push"
     pull = "pull"
     legs = "legs"
+    shoulders = "shoulders"
     full_body = "full_body"
     cardio = "cardio"
     other = "other"
