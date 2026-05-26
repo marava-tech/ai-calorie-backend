@@ -1,6 +1,6 @@
 """Sleep quality logs — hours_slept → quality auto-derived."""
 from datetime import datetime, timezone, date, timedelta
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from auth import get_current_user
 from database import get_db
 from models.sleep_log import SleepLogCreate, SleepQuality
@@ -34,6 +34,16 @@ def _derive_quality(hours: float, thresholds: dict) -> SleepQuality:
 
 @router.post("", status_code=201)
 async def log_sleep(body: SleepLogCreate, _: str = Depends(get_current_user)):
+    # Validate hours_slept range
+    if not (1.0 <= body.hours_slept <= 12.0):
+        raise HTTPException(422, "hours_slept must be between 1 and 12")
+
+    # Only allow logging for today or yesterday (quiz is submitted for last night's sleep)
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    if body.date not in (today.isoformat(), yesterday.isoformat()):
+        raise HTTPException(422, "date must be today or yesterday")
+
     db = get_db()
     profile = await db.user_profile.find_one({})
     raw_thresholds = (profile or {}).get("sleep_thresholds", _DEFAULT_THRESHOLDS)
