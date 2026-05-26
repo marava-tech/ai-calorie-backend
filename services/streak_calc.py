@@ -29,6 +29,53 @@ async def consecutive_days(dates: list[str]) -> tuple[int, int]:
     return current, best
 
 
+async def consecutive_gym_days_with_skip(dates: list[str], max_skip: int = 2) -> tuple[int, int]:
+    """
+    Returns (current_streak, best_streak) for gym visits, counting each attended day.
+    A gap of up to max_skip rest days between sessions is allowed and does not break the streak.
+    Example: Mon gym → Tue/Wed rest → Thu gym  = gap of 2 = still one streak of 2 days.
+    """
+    if not dates:
+        return 0, 0
+
+    unique = sorted(set(dates))
+    today = date.today()
+    last_date = date.fromisoformat(unique[-1])
+    days_since_last = (today - last_date).days
+
+    # ── best streak (forward scan) ──────────────────────────────────────────
+    best = 1
+    run = 1
+    for i in range(1, len(unique)):
+        prev = date.fromisoformat(unique[i - 1])
+        curr = date.fromisoformat(unique[i])
+        # gap in calendar days between two sessions; 1 = consecutive, 2+ = rest days in between
+        calendar_gap = (curr - prev).days
+        if calendar_gap <= max_skip + 1:   # e.g. max_skip=2 → allow gaps ≤ 3 days apart
+            run += 1
+            best = max(best, run)
+        else:
+            run = 1
+    best = max(best, 1)
+
+    # ── current streak (backward scan from last session) ───────────────────
+    # If user hasn't been to the gym within the skip window, streak is broken
+    if days_since_last > max_skip:
+        return 0, best
+
+    current = 1
+    for i in range(len(unique) - 1, 0, -1):
+        curr = date.fromisoformat(unique[i])
+        prev = date.fromisoformat(unique[i - 1])
+        calendar_gap = (curr - prev).days
+        if calendar_gap <= max_skip + 1:
+            current += 1
+        else:
+            break
+
+    return current, best
+
+
 def _iso_week_key(d: date) -> str:
     iso = d.isocalendar()
     return f"{iso.year}-W{iso.week:02d}"
@@ -104,7 +151,13 @@ async def calculate_all_streaks() -> dict:
     min_days = (profile or {}).get("gym_streak_min_days_per_week", 5)
 
     gym_docs = await db.gym_sessions.find({"attended": True}, {"date": 1}).to_list(None)
-    gym_weekly = await calculate_weekly_gym_streak([d["date"] for d in gym_docs], min_days)
+    gym_date_list = [d["date"] for d in gym_docs]
+    gym_weekly = await calculate_weekly_gym_streak(gym_date_list, min_days)
+
+    # Day-based streak with 2-day skip tolerance (shown in the main chip)
+    gym_days_current, gym_days_best = await consecutive_gym_days_with_skip(gym_date_list, max_skip=2)
+    gym_weekly["current_days"] = gym_days_current
+    gym_weekly["best_days"] = gym_days_best
 
     food_docs = await db.food_logs.find({}, {"date": 1}).to_list(None)
     log_current, log_best = await consecutive_days(list({d["date"] for d in food_docs}))
