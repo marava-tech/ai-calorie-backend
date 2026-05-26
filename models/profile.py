@@ -44,6 +44,11 @@ class ProfilePatch(BaseModel):
     gym_streak_min_days_per_week: Optional[int] = None
     sleep_thresholds: Optional[SleepThresholds] = None
     photo_url: Optional[str] = None
+    # Manual goal overrides (skip TDEE recalc for these when provided)
+    goal_kcal: Optional[int] = None
+    protein_g: Optional[int] = None
+    carbs_g: Optional[int] = None
+    fat_g: Optional[int] = None
 
 
 class TDEEResult(BaseModel):
