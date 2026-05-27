@@ -59,8 +59,9 @@ async def consecutive_gym_days_with_skip(dates: list[str], max_skip: int = 2) ->
     best = max(best, 1)
 
     # ── current streak (backward scan from last session) ───────────────────
-    # If user hasn't been to the gym within the skip window, streak is broken
-    if days_since_last > max_skip:
+    # Streak is broken only if the gap from today to the last session exceeds
+    # the same threshold used between sessions (max_skip + 1 calendar days).
+    if days_since_last > max_skip + 1:
         return 0, best
 
     current = 1

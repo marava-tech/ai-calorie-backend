@@ -11,7 +11,7 @@ from database import get_db
 from models.gym_session import GymSessionCreate, PhotoAngle
 from services import gemini as gemini_svc
 from services import minio_client
-from services.streak_calc import calculate_weekly_gym_streak
+from services.streak_calc import calculate_weekly_gym_streak, consecutive_gym_days_with_skip
 from utils import parse_object_id, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,11 @@ async def _sync_gym_streak(db):
     profile = await db.user_profile.find_one({})
     min_days = (profile or {}).get("gym_streak_min_days_per_week", 5)
     docs = await db.gym_sessions.find({"attended": True}, {"date": 1}).to_list(None)
-    weekly = await calculate_weekly_gym_streak([d["date"] for d in docs], min_days)
+    gym_date_list = [d["date"] for d in docs]
+    weekly = await calculate_weekly_gym_streak(gym_date_list, min_days)
+    current_days, best_days = await consecutive_gym_days_with_skip(gym_date_list, max_skip=2)
+    weekly["current_days"] = current_days
+    weekly["best_days"] = best_days
     await db.user_profile.update_one(
         {}, {"$set": {"streaks.gym_weekly": weekly}}
     )
