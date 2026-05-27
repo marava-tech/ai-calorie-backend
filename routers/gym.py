@@ -122,7 +122,7 @@ async def _run_body_analysis(
 async def _sync_gym_streak(db):
     profile = await db.user_profile.find_one({})
     min_days = (profile or {}).get("gym_streak_min_days_per_week", 5)
-    docs = await db.gym_sessions.find({"attended": True}, {"date": 1}).to_list(None)
+    docs = await db.daily_checkins.find({"gym": True}, {"date": 1}).to_list(None)
     gym_date_list = [d["date"] for d in docs]
     weekly = await calculate_weekly_gym_streak(gym_date_list, min_days)
     current_days, best_days = await consecutive_gym_days_with_skip(gym_date_list, max_skip=2)
