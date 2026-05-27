@@ -151,7 +151,9 @@ async def calculate_all_streaks() -> dict:
     profile = await db.user_profile.find_one({})
     min_days = (profile or {}).get("gym_streak_min_days_per_week", 5)
 
-    gym_docs = await db.gym_sessions.find({"attended": True}, {"date": 1}).to_list(None)
+    # Gym attendance comes from daily check-ins (gym: True), not gym_sessions
+    # (gym_sessions is used for progress photos, not attendance tracking)
+    gym_docs = await db.daily_checkins.find({"gym": True}, {"date": 1}).to_list(None)
     gym_date_list = [d["date"] for d in gym_docs]
     gym_weekly = await calculate_weekly_gym_streak(gym_date_list, min_days)
 
