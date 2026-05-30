@@ -3,6 +3,7 @@ import logging
 import uuid
 from datetime import datetime, timezone, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from pydantic import BaseModel
 from enum import Enum
 
 from auth import get_current_user
@@ -69,6 +70,50 @@ async def _run_analysis(photo_id: str, image_bytes: bytes, angle: str, db):
         {"photo_id": photo_id},
         {"$set": {"analysis": result}},
     )
+
+
+class CompareRequest(BaseModel):
+    photo_ids: list[str]
+
+
+@router.post("/compare")
+async def compare_body_photos(req: CompareRequest, _: str = Depends(get_current_user)):
+    """Compare 2–3 body photos using AI visual progression analysis."""
+    if len(req.photo_ids) < 2 or len(req.photo_ids) > 3:
+        raise HTTPException(status_code=400, detail="Select 2 or 3 photos to compare")
+
+    db = get_db()
+    docs = []
+    for pid in req.photo_ids:
+        doc = await db.body_photos.find_one({"photo_id": pid})
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Photo {pid} not found")
+        docs.append(doc)
+
+    angles = {d["angle"] for d in docs}
+    if len(angles) > 1:
+        raise HTTPException(status_code=400, detail="All selected photos must be the same angle")
+
+    photos_payload = []
+    for doc in docs:
+        image_bytes = await minio_client.download_image(doc["image_url"])
+        photos_payload.append({
+            "image_bytes": image_bytes,
+            "date": doc["date"],
+            "angle": doc["angle"],
+            "photo_id": doc["photo_id"],
+            "image_url": doc["image_url"],
+        })
+
+    comparison = await gemini_svc.compare_body_photos(photos_payload)
+
+    return {
+        "photos": [
+            {"photo_id": d["photo_id"], "date": d["date"], "angle": d["angle"], "image_url": d["image_url"]}
+            for d in sorted(docs, key=lambda x: x["date"])
+        ],
+        "comparison": comparison,
+    }
 
 
 @router.get("")
