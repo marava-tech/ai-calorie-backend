@@ -1,4 +1,5 @@
 """Standalone body photo uploads — decoupled from gym sessions."""
+import json
 import logging
 import uuid
 from datetime import datetime, timezone, date, timedelta
@@ -105,15 +106,38 @@ async def compare_body_photos(req: CompareRequest, _: str = Depends(get_current_
             "image_url": doc["image_url"],
         })
 
-    comparison = await gemini_svc.compare_body_photos(photos_payload)
+    try:
+        comparison = await gemini_svc.compare_body_photos(photos_payload)
+    except (ValueError, KeyError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=502, detail=f"AI comparison failed: {e}")
+
+    photos_meta = [
+        {"photo_id": d["photo_id"], "date": d["date"], "angle": d["angle"], "image_url": d["image_url"]}
+        for d in sorted(docs, key=lambda x: x["date"])
+    ]
+    comparison_id = str(uuid.uuid4())
+    await db.body_photo_comparisons.insert_one({
+        "comparison_id": comparison_id,
+        "angle": next(iter(angles)),
+        "photos": photos_meta,
+        "comparison": comparison,
+        "created_at": datetime.now(timezone.utc),
+    })
 
     return {
-        "photos": [
-            {"photo_id": d["photo_id"], "date": d["date"], "angle": d["angle"], "image_url": d["image_url"]}
-            for d in sorted(docs, key=lambda x: x["date"])
-        ],
+        "comparison_id": comparison_id,
+        "photos": photos_meta,
         "comparison": comparison,
     }
+
+
+@router.get("/comparisons")
+async def list_comparisons(_: str = Depends(get_current_user)):
+    db = get_db()
+    docs = await db.body_photo_comparisons.find({}).sort("created_at", -1).to_list(None)
+    for d in docs:
+        d["_id"] = str(d["_id"])
+    return {"comparisons": docs}
 
 
 @router.get("")

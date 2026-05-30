@@ -33,7 +33,9 @@ def _img_url(image_bytes: bytes, mime: str = "image/jpeg") -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def _parse_json(text: str) -> dict:
+def _parse_json(text: str | None) -> dict:
+    if not text:
+        raise ValueError("LLM returned an empty response")
     text = text.strip()
     text = re.sub(r"^```(?:json)?\n?", "", text)
     text = re.sub(r"\n?```$", "", text)
