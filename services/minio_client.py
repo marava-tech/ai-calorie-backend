@@ -12,6 +12,14 @@ BUCKET_BOWL = BUCKET
 BUCKET_PROFILE = BUCKET
 
 
+async def download_image(url: str) -> bytes:
+    """Fetch image bytes from a public URL."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+
 async def upload_image(image_bytes: bytes, bucket: str, filename: str) -> str:
     """Upload image bytes to s3.marava.tech; returns public URL."""
     async with httpx.AsyncClient(timeout=30.0) as client:

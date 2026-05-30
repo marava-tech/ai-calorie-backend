@@ -44,25 +44,27 @@ async def get_day_summary(date: str, _: str = Depends(get_current_user)):
     supp_names = []
     if checkin:
         supplement_map = {
-            "fish_oil": "Fish Oil",
-            "magnesium": "Magnesium",
-            "vitamin_d3": "Vitamin D3",
-            "multi_vitamin": "Multi Vitamin",
-            "whey_protein": "Whey Protein",
+            "fish_oil":     ("Fish Oil",     "fish_oil_caps",      "cap"),
+            "magnesium":    ("Magnesium",    "magnesium_caps",     "cap"),
+            "vitamin_d3":   ("Vitamin D3",   "vitamin_d3_caps",    "cap"),
+            "multi_vitamin":("Multi Vitamin","multi_vitamin_caps",  "cap"),
+            "whey_protein": ("Whey Protein", "whey_protein_scoops","scoop"),
         }
-        for key, label in supplement_map.items():
+        for key, (label, count_key, unit) in supplement_map.items():
             if checkin.get(key):
-                supp_names.append(label)
+                count = checkin.get(count_key)
+                supp_names.append({"name": label, "count": count, "unit": unit})
         supp_data = checkin.get("supplement_data") or {}
         for sid, sval in supp_data.items():
             if isinstance(sval, dict) and sval.get("taken"):
-                supp_names.append(sid)
+                units = sval.get("units")
+                supp_names.append({"name": sid, "count": units, "unit": "unit"})
 
     weight_doc = await db.weight_photos.find_one({"date": date, "weight_kg": {"$ne": None}})
     weight_summary = {"weight_kg": weight_doc["weight_kg"]} if weight_doc else None
 
-    if_doc = await db.if_logs.find_one({"date": date})
-    if_summary = {"adhered": if_doc["adhered"]} if if_doc else None
+    if_followed = (checkin or {}).get("if_followed")
+    if_summary = {"adhered": if_followed} if if_followed is not None else None
 
     return {
         "date": date,

@@ -205,6 +205,76 @@ async def analyze_body_photo(
     return _parse_json(text)
 
 
+_COMPARE_SYSTEM = (
+    "You are an elite physique coach and certified body composition analyst. "
+    "You specialize in tracking visual progress over time using photographic evidence. "
+    "Your assessments are objective, detailed, and actionable — not motivational fluff."
+)
+
+
+async def compare_body_photos(photos: list[dict]) -> dict:
+    """
+    Compare 2–3 body photos chronologically.
+    Each dict: {image_bytes: bytes, date: str, angle: str}
+    Returns structured comparison JSON.
+    """
+    photos_sorted = sorted(photos, key=lambda p: p["date"])
+    n = len(photos_sorted)
+    first_date = photos_sorted[0]["date"]
+    last_date = photos_sorted[-1]["date"]
+    angle = photos_sorted[0]["angle"]
+
+    from datetime import date as dt_date
+    try:
+        d1 = dt_date.fromisoformat(first_date)
+        d2 = dt_date.fromisoformat(last_date)
+        duration_days = (d2 - d1).days
+    except Exception:
+        duration_days = 0
+
+    photo_labels = "\n".join(
+        f"  Photo {i+1}: {p['date']}" for i, p in enumerate(photos_sorted)
+    )
+
+    prompt = (
+        f"You are given {n} {angle}-view body photos taken in chronological order:\n"
+        f"{photo_labels}\n\n"
+        f"Total duration: {duration_days} days ({duration_days // 7} weeks)\n\n"
+        "Analyze the visual progression across ALL photos. Compare muscle definition, "
+        "fat distribution, vascularity, posture, and overall body composition changes.\n\n"
+        "Then assess: given the duration, what progress was realistically EXPECTED for someone "
+        "doing consistent training and diet? Are the results ahead, on track, or behind expectations?\n\n"
+        "Return ONLY valid JSON in this exact structure:\n"
+        "{\n"
+        '  "duration_days": number,\n'
+        '  "overall": "improved" | "maintained" | "declined",\n'
+        '  "improvements": ["specific observation 1", "..."],\n'
+        '  "deimprovements": ["specific observation 1", "..."],\n'
+        '  "bf_estimate_latest": "e.g. 14–17%",\n'
+        '  "expected_in_duration": "What typical progress looks like in this timeframe",\n'
+        '  "verdict": "Are results ahead / on track / behind expectations — 1–2 sentences",\n'
+        '  "suggestions": ["actionable suggestion 1", "actionable suggestion 2", "..."]\n'
+        "}\n\n"
+        "Rules:\n"
+        "- improvements and deimprovements: specific, observable, body-part-level detail\n"
+        "- If no visible change in an area, omit it\n"
+        "- suggestions: 3–5 concrete, prioritized actions\n"
+        "- Output ONLY the JSON, no markdown fences"
+    )
+
+    content: list = [{"type": "text", "text": prompt}]
+    for p in photos_sorted:
+        content.append({"type": "image_url", "image_url": {"url": _img_url(p["image_bytes"])}})
+
+    messages = [{"role": "user", "content": content}]
+    text = await _chat(_VISION_MODEL, messages, system=_COMPARE_SYSTEM)
+    result = _parse_json(text)
+    result["duration_days"] = duration_days
+    result["first_date"] = first_date
+    result["last_date"] = last_date
+    return result
+
+
 _MACRO_SYSTEM = (
     "You are a registered dietitian with expert-level knowledge of food composition databases "
     "(USDA FoodData Central, NCCDB, Indian Food Composition Tables). "
