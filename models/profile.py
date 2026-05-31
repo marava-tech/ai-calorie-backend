@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 
 
 class NotificationPrefs(BaseModel):
@@ -49,6 +49,16 @@ class ProfilePatch(BaseModel):
     protein_g: Optional[int] = None
     carbs_g: Optional[int] = None
     fat_g: Optional[int] = None
+    # Gym / rest day schedule (0=Mon … 6=Sun)
+    gym_days: Optional[List[int]] = None
+    gym_goal_kcal: Optional[int] = None
+    gym_protein_g: Optional[int] = None
+    gym_carbs_g: Optional[int] = None
+    gym_fat_g: Optional[int] = None
+    rest_goal_kcal: Optional[int] = None
+    rest_protein_g: Optional[int] = None
+    rest_carbs_g: Optional[int] = None
+    rest_fat_g: Optional[int] = None
 
 
 class TDEEResult(BaseModel):
