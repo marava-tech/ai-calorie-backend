@@ -57,7 +57,7 @@ async def get_profile(_: str = Depends(get_current_user)):
 @router.patch("")
 async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     db = get_db()
-    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None or isinstance(v, list)}
     if not update_data:
         raise HTTPException(400, "No fields provided")
 
