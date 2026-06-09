@@ -1,10 +1,11 @@
 """Food logging — AI analysis pipeline + CRUD for logs."""
+import asyncio
 import logging
 import uuid
 import base64
 from datetime import datetime, timezone, date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Form
 from bson import ObjectId
 from typing import Optional
 
@@ -129,11 +130,11 @@ async def analyze_food(
                 "overlap": round(best_overlap, 2),
             }
 
-    # Resolve macros for each detected item so the review screen shows real values
-    enriched_items = []
-    for item in items:
-        macros = await _resolve_macros(item["name"], item["estimated_weight_g"])
-        enriched_items.append({**item, **macros})
+    # Resolve macros for all detected items in parallel
+    macro_list = await asyncio.gather(*[
+        _resolve_macros(item["name"], item["estimated_weight_g"]) for item in items
+    ])
+    enriched_items = [{**item, **macros} for item, macros in zip(items, macro_list)]
 
     return {
         "items": enriched_items,
@@ -145,17 +146,19 @@ async def analyze_food(
 
 
 @router.post("/logs", status_code=201)
-async def create_food_log(body: FoodLogCreate, _: str = Depends(get_current_user)):
+async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks, _: str = Depends(get_current_user)):
     db = get_db()
     now = datetime.now(timezone.utc)
     food_date = now.date().isoformat()
 
-    # Resolve macros for items that don't have them
+    # Resolve macros for all items in parallel
     resolved_items = []
     total_cal = total_protein = total_carbs = total_fat = 0.0
 
-    for item in body.items:
-        macros = await _resolve_macros(item.name, item.estimated_weight_g)
+    macro_list = await asyncio.gather(*[
+        _resolve_macros(item.name, item.estimated_weight_g) for item in body.items
+    ])
+    for item, macros in zip(body.items, macro_list):
         resolved = item.model_dump()
         resolved.update(macros)
         resolved_items.append(resolved)
@@ -188,7 +191,7 @@ async def create_food_log(body: FoodLogCreate, _: str = Depends(get_current_user
 
     result = await db.food_logs.insert_one(doc)
 
-    await _update_if_log(food_date, now, db)
+    background_tasks.add_task(_update_if_log, food_date, now, db)
 
     doc["_id"] = str(result.inserted_id)
     return doc
@@ -244,28 +247,26 @@ async def get_daily_totals(days: int = 30, _: str = Depends(get_current_user)):
     """Returns daily aggregated calories + protein for the past N days."""
     db = get_db()
     today = date.today()
+    match_stage: dict = {}
     if days > 0:
         start = (today - timedelta(days=days - 1)).isoformat()
-        query: dict = {"date": {"$gte": start, "$lte": today.isoformat()}}
-    else:
-        query = {}
+        match_stage = {"date": {"$gte": start, "$lte": today.isoformat()}}
 
-    docs = await db.food_logs.find(query).to_list(None)
-    day_map: dict[str, dict] = {}
-    for doc in docs:
-        d = doc.get("date", "")
-        if d not in day_map:
-            day_map[d] = {"calories_kcal": 0.0, "protein_g": 0.0}
-        t = doc.get("totals", {})
-        day_map[d]["calories_kcal"] += t.get("calories_kcal", 0)
-        day_map[d]["protein_g"] += t.get("protein_g", 0)
+    pipeline = [
+        {"$match": match_stage},
+        {"$group": {
+            "_id": "$date",
+            "calories_kcal": {"$sum": "$totals.calories_kcal"},
+            "protein_g": {"$sum": "$totals.protein_g"},
+        }},
+        {"$project": {
+            "_id": 0,
+            "date": "$_id",
+            "calories_kcal": {"$round": ["$calories_kcal", 1]},
+            "protein_g": {"$round": ["$protein_g", 1]},
+        }},
+        {"$sort": {"date": 1}},
+    ]
 
-    result = sorted([
-        {
-            "date": d,
-            "calories_kcal": round(v["calories_kcal"], 1),
-            "protein_g": round(v["protein_g"], 1),
-        }
-        for d, v in day_map.items()
-    ], key=lambda x: x["date"])
+    result = await db.food_logs.aggregate(pipeline).to_list(None)
     return {"totals": result}
