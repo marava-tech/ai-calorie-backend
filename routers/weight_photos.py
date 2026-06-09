@@ -53,7 +53,8 @@ async def upload_weight_photo(
             profile = await db.user_profile.find_one({})
             if profile:
                 old_goal = profile.get("goal_kcal", 0)
-                tdee = calculate_tdee(weight_kg, profile["height_cm"], profile["age"], profile["sex"])
+                gym_days = profile.get("gym_days") or []
+                tdee = calculate_tdee(weight_kg, profile["height_cm"], profile["age"], profile["sex"], gym_days_per_week=len(gym_days))
 
                 # Restore user-overridden goal fields so a new weight log doesn't wipe them.
                 overrides: set[str] = set(profile.get("goal_overrides") or [])
@@ -94,6 +95,36 @@ async def list_weight_photos(
     for d in docs:
         d["_id"] = str(d["_id"])
     return {"photos": docs}
+
+
+@router.get("/weekly-averages")
+async def weekly_weight_averages(_: str = Depends(get_current_user)):
+    """Return per-ISO-week average weight, grouped Mon–Sun, sorted ascending."""
+    from collections import defaultdict
+    from datetime import date as _date
+
+    db = get_db()
+    docs = await db.weight_photos.find({"weight_kg": {"$ne": None}}).sort("date", 1).to_list(None)
+
+    week_data: dict[str, list[float]] = defaultdict(list)
+    for doc in docs:
+        try:
+            d = _date.fromisoformat(doc["date"])
+            monday = d - timedelta(days=d.weekday())
+            week_data[monday.isoformat()].append(float(doc["weight_kg"]))
+        except Exception:
+            continue
+
+    weeks = []
+    for week_start in sorted(week_data.keys()):
+        weights = week_data[week_start]
+        weeks.append({
+            "week_start": week_start,
+            "avg_weight": round(sum(weights) / len(weights), 1),
+            "entries": len(weights),
+        })
+
+    return {"weeks": weeks}
 
 
 @router.delete("/{photo_id}", status_code=204)
