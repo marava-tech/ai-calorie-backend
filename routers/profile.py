@@ -18,8 +18,10 @@ router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 
 def _tdee_dict(doc: dict) -> dict:
+    gym_days = doc.get("gym_days") or []
     return calculate_tdee(
-        doc["weight_kg"], doc["height_cm"], doc["age"], doc["sex"]
+        doc["weight_kg"], doc["height_cm"], doc["age"], doc["sex"],
+        gym_days_per_week=len(gym_days),
     )
 
 
@@ -30,7 +32,8 @@ async def create_profile(body: ProfileCreate, _: str = Depends(get_current_user)
     if existing:
         raise HTTPException(400, "Profile already exists — use PATCH to update")
 
-    tdee = calculate_tdee(body.weight_kg, body.height_cm, body.age, body.sex)
+    gym_days = body.gym_days or []
+    tdee = calculate_tdee(body.weight_kg, body.height_cm, body.age, body.sex, gym_days_per_week=len(gym_days))
     doc = {
         **body.model_dump(),
         **tdee,
@@ -66,7 +69,11 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
         raise HTTPException(404, "Profile not found")
 
     merged = {**doc, **update_data}
-    tdee = calculate_tdee(merged["weight_kg"], merged["height_cm"], merged["age"], merged["sex"])
+    gym_days = merged.get("gym_days") or []
+    tdee = calculate_tdee(
+        merged["weight_kg"], merged["height_cm"], merged["age"], merged["sex"],
+        gym_days_per_week=len(gym_days),
+    )
 
     # Preserve user-overridden macro/calorie goals across any PATCH.
     # - If the user is explicitly setting a goal field NOW  → use that value and mark it overridden.
