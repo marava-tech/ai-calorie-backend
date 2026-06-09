@@ -88,3 +88,34 @@ async def get_sleep_logs(days: int = 30, _: str = Depends(get_current_user)):
     for d in docs:
         d["_id"] = str(d["_id"])
     return {"logs": docs}
+
+
+@router.get("/weekly-averages")
+async def weekly_sleep_averages(_: str = Depends(get_current_user)):
+    """Return per-ISO-week average sleep duration, grouped Mon–Sun, sorted ascending."""
+    from collections import defaultdict
+    from datetime import date as _date
+
+    db = get_db()
+    docs = await db.sleep_logs.find({"hours_slept": {"$ne": None}}).sort("date", 1).to_list(None)
+
+    week_data: dict[str, list[float]] = defaultdict(list)
+    for doc in docs:
+        try:
+            d = _date.fromisoformat(doc["date"])
+            monday = d - timedelta(days=d.weekday())
+            week_data[monday.isoformat()].append(float(doc["hours_slept"]))
+        except Exception:
+            continue
+
+    weeks = []
+    for week_start in sorted(week_data.keys()):
+        hours = week_data[week_start]
+        weeks.append({
+            "week_start": week_start,
+            "avg_sleep": round(sum(hours) / len(hours), 1),
+            "entries": len(hours),
+        })
+
+    return {"weeks": weeks[-4:]}
+
