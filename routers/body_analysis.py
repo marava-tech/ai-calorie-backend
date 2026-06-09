@@ -11,35 +11,39 @@ router = APIRouter(prefix="/api/body-analysis", tags=["body-analysis"])
 async def body_fat_trend(days: int = 90, _: str = Depends(get_current_user)):
     """Return time-series of body fat midpoint estimates from gym photo analyses."""
     db = get_db()
-    query = {"photos.analysis": {"$ne": None}}
+    match: dict = {"photos.analysis": {"$ne": None}}
     if days > 0:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
-        query["date"] = {"$gte": cutoff}
+        match["date"] = {"$gte": cutoff}
 
-    sessions = await db.gym_sessions.find(
-        query, {"date": 1, "photos": 1}
-    ).sort("date", 1).to_list(None)
+    pipeline = [
+        {"$match": match},
+        {"$unwind": "$photos"},
+        {"$match": {
+            "photos.analysis": {"$ne": None},
+            "photos.analysis.bf_low_pct": {"$ne": None},
+            "photos.analysis.bf_high_pct": {"$ne": None},
+        }},
+        {"$project": {
+            "_id": 0,
+            "date": 1,
+            "angle": "$photos.angle",
+            "bf_low_pct": "$photos.analysis.bf_low_pct",
+            "bf_high_pct": "$photos.analysis.bf_high_pct",
+            "bf_midpoint_pct": {"$round": [
+                {"$divide": [
+                    {"$add": ["$photos.analysis.bf_low_pct", "$photos.analysis.bf_high_pct"]},
+                    2,
+                ]},
+                1,
+            ]},
+            "caption": {"$ifNull": ["$photos.analysis.caption", ""]},
+            "image_url": "$photos.image_url",
+        }},
+        {"$sort": {"date": 1}},
+    ]
 
-    trend = []
-    for session in sessions:
-        for photo in session.get("photos", []):
-            analysis = photo.get("analysis")
-            if not analysis:
-                continue
-            low = analysis.get("bf_low_pct")
-            high = analysis.get("bf_high_pct")
-            if low is not None and high is not None:
-                midpoint = round((low + high) / 2, 1)
-                trend.append({
-                    "date": session["date"],
-                    "angle": photo.get("angle"),
-                    "bf_midpoint_pct": midpoint,
-                    "bf_low_pct": low,
-                    "bf_high_pct": high,
-                    "caption": analysis.get("caption", ""),
-                    "image_url": photo.get("image_url"),
-                })
-
+    trend = await db.gym_sessions.aggregate(pipeline).to_list(None)
     return {"trend": trend}
 
 
