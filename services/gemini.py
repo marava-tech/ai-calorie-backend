@@ -66,7 +66,12 @@ Weight estimation guidelines:
 - Common anchors: cooked rice (1 cup ≈ 200g), chicken breast (medium ≈ 160g), bread slice ≈ 30g, egg ≈ 55g, banana (medium ≈ 120g)
 - For Indian food: 1 roti ≈ 40g, 1 cup dal ≈ 250g, 1 cup sabzi ≈ 200g, 1 serving rice ≈ 150–200g
 - Factor in cooking method: fried items are denser, boiled/steamed have more water weight
-- If a kitchen scale display is visible in the image, read the exact number
+
+Scale reading rules (CRITICAL):
+- If a kitchen scale display is visible, read that number and put it in scale_weight_g
+- scale_weight_g is the GROSS weight = food + bowl/plate/container combined
+- Do NOT use the scale reading as a food item's estimated_weight_g — that field must always be a visual estimate
+- estimated_weight_g per item is your visual portion estimate, independent of any scale reading
 
 Naming rules:
 - Be specific: "grilled chicken breast" not "chicken", "steamed basmati rice" not "rice"
