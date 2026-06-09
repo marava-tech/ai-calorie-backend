@@ -124,7 +124,7 @@ async def weekly_weight_averages(_: str = Depends(get_current_user)):
             "entries": len(weights),
         })
 
-    return {"weeks": weeks}
+    return {"weeks": weeks[-4:]}
 
 
 @router.delete("/{photo_id}", status_code=204)

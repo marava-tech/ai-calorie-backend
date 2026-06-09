@@ -28,4 +28,9 @@ async def ensure_indexes():
         await db[collection].create_index([("date", 1)], background=True)
     # supplement lookup by ID
     await db.supplement_logs.create_index([("supplement_id", 1)], background=True)
+    # compound indexes for common query patterns
+    await db.food_logs.create_index([("date", 1), ("meal_slot", 1)], background=True)
+    await db.daily_checkins.create_index([("date", -1)], background=True)
+    await db.gym_sessions.create_index([("photos.analysis", 1), ("date", 1)], background=True)
+    await db.weight_photos.create_index([("photo_id", 1)], background=True)
     logger.info("MongoDB indexes ensured")
