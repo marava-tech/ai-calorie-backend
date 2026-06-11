@@ -132,14 +132,20 @@ async def get_supplement_logs(date_str: str, user_id: str = Depends(get_current_
         log = logs_by_id.get(sid)
         checklist.append({
             "supplement_id": sid,
+            "id": sid,
             "name": s["name"],
             "dose_amount": s["dose_amount"],
             "dose_unit": s["dose_unit"],
+            "dose_weight_g": s["dose_amount"],
             "timing": s.get("timing"),
             "taken": sid in taken_ids,
             "units_taken": log["units_taken"] if log else 0,
             "current_streak": s.get("current_streak", 0),
             "best_streak": s.get("best_streak", 0),
+            "calories_per_unit": s.get("calories_per_unit", 0.0),
+            "protein_per_unit": s.get("protein_per_unit", 0.0),
+            "carbs_per_unit": s.get("carbs_per_unit", 0.0),
+            "fat_per_unit": s.get("fat_per_unit", 0.0),
         })
     return {"date": date_str, "checklist": checklist}
 
