@@ -29,6 +29,7 @@ class ProfileCreate(BaseModel):
     gym_streak_min_days_per_week: int = 5
     sleep_thresholds: SleepThresholds = Field(default_factory=SleepThresholds)
     photo_url: Optional[str] = None
+    gym_days: Optional[List[int]] = None  # 0=Mon … 6=Sun
     if_enabled: bool = False
     subtract_bowl_weight: bool = False
     openrouter_api_key: Optional[str] = None
