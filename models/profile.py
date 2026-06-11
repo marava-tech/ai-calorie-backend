@@ -65,6 +65,7 @@ class ProfilePatch(BaseModel):
     if_enabled: Optional[bool] = None
     subtract_bowl_weight: Optional[bool] = None
     openrouter_api_key: Optional[str] = None
+    disabled_meal_slots: Optional[List[str]] = None  # e.g. ["breakfast"]
 
 
 class TDEEResult(BaseModel):

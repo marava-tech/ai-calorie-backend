@@ -215,7 +215,7 @@ async def get_food_logs(date: str, user_id: str = Depends(get_current_user)):
     db = get_db()
     docs = await db.food_logs.find({"date": date, "user_id": user_id}).to_list(None)
 
-    grouped: dict[str, list] = {"meal1": [], "meal2": [], "snack": [], "supplement": []}
+    grouped: dict[str, list] = {"breakfast": [], "lunch": [], "dinner": [], "extras": [], "supplement": [], "meal1": [], "meal2": [], "snack": []}
     slot_totals: dict[str, dict] = {}
 
     for doc in docs:
