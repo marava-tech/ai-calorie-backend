@@ -25,10 +25,11 @@ def _serialize(doc: dict) -> dict:
 
 
 @router.post("", status_code=201)
-async def create_session(body: GymSessionCreate, _: str = Depends(get_current_user)):
+async def create_session(body: GymSessionCreate, user_id: str = Depends(get_current_user)):
     db = get_db()
     doc = {
         **body.model_dump(),
+        "user_id": user_id,
         "photos": [],
         "created_at": datetime.now(timezone.utc),
     }
@@ -36,16 +37,16 @@ async def create_session(body: GymSessionCreate, _: str = Depends(get_current_us
     doc["id"] = str(result.inserted_id)
     doc.pop("_id", None)
 
-    await _sync_gym_streak(db)
+    await _sync_gym_streak(user_id, db)
 
     return doc
 
 
 @router.get("")
-async def list_sessions(month: str, _: str = Depends(get_current_user)):
+async def list_sessions(month: str, user_id: str = Depends(get_current_user)):
     """month format: YYYY-MM"""
     db = get_db()
-    docs = await db.gym_sessions.find({"date": {"$regex": f"^{month}"}}).to_list(None)
+    docs = await db.gym_sessions.find({"date": {"$regex": f"^{month}"}, "user_id": user_id}).to_list(None)
     return [_serialize(d) for d in docs]
 
 
@@ -54,11 +55,11 @@ async def upload_photo(
     session_id: str,
     angle: PhotoAngle = Form(...),
     photo: UploadFile = File(...),
-    _: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_user),
 ):
     db = get_db()
     oid = parse_object_id(session_id, "session_id")
-    session = await db.gym_sessions.find_one({"_id": oid})
+    session = await db.gym_sessions.find_one({"_id": oid, "user_id": user_id})
     if not session:
         raise HTTPException(404, "Session not found")
 
@@ -66,6 +67,12 @@ async def upload_photo(
     validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
     filename = f"{uuid.uuid4()}.jpg"
     image_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_GYM, filename)
+
+    # Fetch user's API key
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    api_key = (profile or {}).get("openrouter_api_key")
+    if not api_key:
+        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
 
     photo_id = str(uuid.uuid4())
     photo_doc = {
@@ -83,7 +90,7 @@ async def upload_photo(
 
     # Trigger async body analysis
     try:
-        await _run_body_analysis(session_id, photo_id, image_bytes, angle.value, db)
+        await _run_body_analysis(session_id, photo_id, image_bytes, angle.value, user_id, api_key, db)
     except Exception as e:
         logger.error("Body analysis failed for session %s photo %s: %s", session_id, photo_id, e)
 
@@ -93,12 +100,12 @@ async def upload_photo(
 
 
 async def _run_body_analysis(
-    session_id: str, photo_id: str, image_bytes: bytes, angle: str, db
+    session_id: str, photo_id: str, image_bytes: bytes, angle: str, user_id: str, api_key: str, db
 ):
     # Get previous photo of same angle for comparison
     prev_image_bytes = None
     all_sessions = await db.gym_sessions.find(
-        {"_id": {"$ne": parse_object_id(session_id)}}
+        {"_id": {"$ne": parse_object_id(session_id)}, "user_id": user_id}
     ).sort("date", -1).to_list(None)
 
     for s in all_sessions:
@@ -111,35 +118,35 @@ async def _run_body_analysis(
             continue
         break
 
-    result = await gemini_svc.analyze_body_photo(image_bytes, prev_image_bytes, angle)
+    result = await gemini_svc.analyze_body_photo(image_bytes, prev_image_bytes, angle, api_key=api_key)
 
     await db.gym_sessions.update_one(
-        {"_id": parse_object_id(session_id), "photos.photo_id": photo_id},
+        {"_id": parse_object_id(session_id), "photos.photo_id": photo_id, "user_id": user_id},
         {"$set": {"photos.$.analysis": result}},
     )
 
 
-async def _sync_gym_streak(db):
-    profile = await db.user_profile.find_one({})
+async def _sync_gym_streak(user_id: str, db):
+    profile = await db.user_profile.find_one({"user_id": user_id})
     min_days = (profile or {}).get("gym_streak_min_days_per_week", 5)
-    docs = await db.daily_checkins.find({"gym": True}, {"date": 1}).to_list(None)
+    docs = await db.daily_checkins.find({"gym": True, "user_id": user_id}, {"date": 1}).to_list(None)
     gym_date_list = [d["date"] for d in docs]
     weekly = await calculate_weekly_gym_streak(gym_date_list, min_days)
     current_days, best_days = await consecutive_gym_days_with_skip(gym_date_list, max_skip=2)
     weekly["current_days"] = current_days
     weekly["best_days"] = best_days
     await db.user_profile.update_one(
-        {}, {"$set": {"streaks.gym_weekly": weekly}}
+        {"user_id": user_id}, {"$set": {"streaks.gym_weekly": weekly}}
     )
 
 
 @router.post("/{session_id}/photos/{photo_id}/analyze")
 async def analyze_photo(
-    session_id: str, photo_id: str, _: str = Depends(get_current_user)
+    session_id: str, photo_id: str, user_id: str = Depends(get_current_user)
 ):
     """Re-trigger body analysis on demand."""
     db = get_db()
-    session = await db.gym_sessions.find_one({"_id": parse_object_id(session_id, "session_id")})
+    session = await db.gym_sessions.find_one({"_id": parse_object_id(session_id, "session_id"), "user_id": user_id})
     if not session:
         raise HTTPException(404, "Session not found")
 

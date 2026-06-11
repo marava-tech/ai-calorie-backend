@@ -26,9 +26,9 @@ def _tdee_dict(doc: dict) -> dict:
 
 
 @router.post("", status_code=201)
-async def create_profile(body: ProfileCreate, _: str = Depends(get_current_user)):
+async def create_profile(body: ProfileCreate, user_id: str = Depends(get_current_user)):
     db = get_db()
-    existing = await db.user_profile.find_one({})
+    existing = await db.user_profile.find_one({"user_id": user_id})
     if existing:
         raise HTTPException(400, "Profile already exists — use PATCH to update")
 
@@ -37,6 +37,7 @@ async def create_profile(body: ProfileCreate, _: str = Depends(get_current_user)
     doc = {
         **body.model_dump(),
         **tdee,
+        "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
         "fcm_token": None,
@@ -48,9 +49,9 @@ async def create_profile(body: ProfileCreate, _: str = Depends(get_current_user)
 
 
 @router.get("")
-async def get_profile(_: str = Depends(get_current_user)):
+async def get_profile(user_id: str = Depends(get_current_user)):
     db = get_db()
-    doc = await db.user_profile.find_one({})
+    doc = await db.user_profile.find_one({"user_id": user_id})
     if not doc:
         raise HTTPException(404, "Profile not found")
     doc["_id"] = str(doc["_id"])
@@ -58,13 +59,13 @@ async def get_profile(_: str = Depends(get_current_user)):
 
 
 @router.patch("")
-async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
+async def patch_profile(body: ProfilePatch, user_id: str = Depends(get_current_user)):
     db = get_db()
     update_data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None or isinstance(v, list)}
     if not update_data:
         raise HTTPException(400, "No fields provided")
 
-    doc = await db.user_profile.find_one({})
+    doc = await db.user_profile.find_one({"user_id": user_id})
     if not doc:
         raise HTTPException(404, "Profile not found")
 
@@ -110,8 +111,8 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
     update_data.update(tdee)
     update_data["updated_at"] = datetime.now(timezone.utc)
 
-    await db.user_profile.update_one({}, {"$set": update_data})
-    updated = await db.user_profile.find_one({})
+    await db.user_profile.update_one({"user_id": user_id}, {"$set": update_data})
+    updated = await db.user_profile.find_one({"user_id": user_id})
     updated["_id"] = str(updated["_id"])
     return updated
 
@@ -119,7 +120,7 @@ async def patch_profile(body: ProfilePatch, _: str = Depends(get_current_user)):
 @router.post("/photo")
 async def upload_profile_photo(
     photo: UploadFile = File(...),
-    _: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_user),
 ):
     """Upload profile picture via upload-api; stores URL in user_profile.photo_url."""
     db = get_db()
@@ -129,5 +130,5 @@ async def upload_profile_photo(
     filename = f"profile_{uuid.uuid4()}.jpg"
     photo_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_PROFILE, filename)
 
-    await db.user_profile.update_one({}, {"$set": {"photo_url": photo_url}})
+    await db.user_profile.update_one({"user_id": user_id}, {"$set": {"photo_url": photo_url}})
     return {"photo_url": photo_url}

@@ -1,16 +1,20 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
-class UserCreate(BaseModel):
-    username: str
-    password: str
+class SendOtpRequest(BaseModel):
+    email: EmailStr
 
 
-class UserLogin(BaseModel):
-    username: str
-    password: str
+class VerifyOtpRequest(BaseModel):
+    email: EmailStr
+    otp: str
 
 
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    is_new_user: bool = False
+
+
+class UsernameUpdate(BaseModel):
+    username: str

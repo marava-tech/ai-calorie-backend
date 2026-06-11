@@ -29,6 +29,9 @@ class ProfileCreate(BaseModel):
     gym_streak_min_days_per_week: int = 5
     sleep_thresholds: SleepThresholds = Field(default_factory=SleepThresholds)
     photo_url: Optional[str] = None
+    if_enabled: bool = False
+    subtract_bowl_weight: bool = False
+    openrouter_api_key: Optional[str] = None
 
 
 class ProfilePatch(BaseModel):
@@ -59,6 +62,9 @@ class ProfilePatch(BaseModel):
     rest_protein_g: Optional[int] = None
     rest_carbs_g: Optional[int] = None
     rest_fat_g: Optional[int] = None
+    if_enabled: Optional[bool] = None
+    subtract_bowl_weight: Optional[bool] = None
+    openrouter_api_key: Optional[str] = None
 
 
 class TDEEResult(BaseModel):
