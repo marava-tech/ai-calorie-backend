@@ -54,7 +54,8 @@ async def _send_weekly_summary():
     async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
         prefs = profile_doc.get("notification_prefs", {})
         if prefs.get("weekly_summary", True):
-            week = datetime.now(timezone.utc).date().strftime("%Y-W%W")
+            iso = datetime.now(timezone.utc).date().isocalendar()
+            week = f"{iso.year}-W{iso.week:02d}"
             try:
                 await fcm_svc.send_notification(
                     profile_doc["fcm_token"],
@@ -101,6 +102,7 @@ async def _send_daily_quiz_reminder():
                 profile_doc["fcm_token"],
                 "Time for your daily check-in!",
                 "Log your supplements, gym, and sleep for today.",
+                {"type": "daily_quiz"},
             )
         except Exception as e:
             logger.error("Failed to send daily quiz reminder FCM for user %s: %s", profile_doc.get("user_id"), e)
