@@ -111,8 +111,10 @@ async def _run_body_analysis(
     for s in all_sessions:
         for p in s.get("photos", []):
             if p.get("angle") == angle and p.get("image_url"):
-                # We can't re-fetch the image bytes from MinIO easily here
-                # Body analysis will work without comparison photo
+                try:
+                    prev_image_bytes = await minio_client.download_image(p["image_url"])
+                except Exception as e:
+                    logger.warning("Could not fetch previous photo for comparison: %s", e)
                 break
         else:
             continue

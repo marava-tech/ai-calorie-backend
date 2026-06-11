@@ -1,6 +1,10 @@
 """Streak calculation — gym (weekly window), IF, food logging, supplement consistency."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from database import get_db
+
+
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
 
 
 async def consecutive_days(dates: list[str]) -> tuple[int, int]:
@@ -9,8 +13,8 @@ async def consecutive_days(dates: list[str]) -> tuple[int, int]:
         return 0, 0
 
     unique = sorted(set(dates))
-    today = date.today().isoformat()
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    today = _utc_today().isoformat()
+    yesterday = (_utc_today() - timedelta(days=1)).isoformat()
 
     best = 1
     current = 1
@@ -39,7 +43,7 @@ async def consecutive_gym_days_with_skip(dates: list[str], max_skip: int = 2) ->
         return 0, 0
 
     unique = sorted(set(dates))
-    today = date.today()
+    today = _utc_today()
     last_date = date.fromisoformat(unique[-1])
     days_since_last = (today - last_date).days
 
@@ -102,7 +106,7 @@ async def calculate_weekly_gym_streak(gym_dates: list[str], min_days: int) -> di
         key = _iso_week_key(d)
         week_counts[key] = week_counts.get(key, 0) + 1
 
-    today = date.today()
+    today = _utc_today()
     current_week_key = _iso_week_key(today)
     current_week_days = week_counts.get(current_week_key, 0)
 

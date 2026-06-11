@@ -54,7 +54,7 @@ async def _send_weekly_summary():
     async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
         prefs = profile_doc.get("notification_prefs", {})
         if prefs.get("weekly_summary", True):
-            week = date.today().strftime("%Y-W%W")
+            week = datetime.now(timezone.utc).date().strftime("%Y-W%W")
             try:
                 await fcm_svc.send_notification(
                     profile_doc["fcm_token"],
