@@ -22,11 +22,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/food", tags=["food"])
 
 
-async def _resolve_macros(name: str, weight_g: float, api_key: str) -> dict:
+async def _resolve_macros(name: str, weight_g: float, api_key: str | None) -> dict:
     result = await lookup_macros(name, weight_g)
     if result:
         return result
-    # Fallback to Gemini
+    if not api_key:
+        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
     ai_result = await gemini_svc.estimate_macros(name, weight_g, api_key=api_key)
     ai_result["source"] = "ai_estimated"
     return ai_result
@@ -136,13 +137,19 @@ async def analyze_food(
 async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user)):
     db = get_db()
     now = datetime.now(timezone.utc)
-    food_date = now.date().isoformat()
 
-    # Fetch user's API key for macro resolution
+    # Derive the log date in the user's local timezone so midnight-crossover entries
+    # land on the correct day (e.g. 1 AM IST is still the same calendar day for the user).
     profile = await db.user_profile.find_one({"user_id": user_id})
+    tz_name = (profile or {}).get("user_timezone", "UTC")
+    try:
+        user_tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        user_tz = ZoneInfo("UTC")
+    food_date = now.astimezone(user_tz).date().isoformat()
+
+    # Fetch user's API key — only needed if OpenFoodFacts misses an item
     api_key = (profile or {}).get("openrouter_api_key")
-    if not api_key:
-        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
 
     # Resolve macros for all items in parallel
     resolved_items = []

@@ -15,6 +15,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 COLLECTIONS_TO_TAG = [
     "food_logs",
     "weight_photos",
+    "body_photos",
+    "body_photo_comparisons",
     "sleep_logs",
     "gym_sessions",
     "daily_checkins",
