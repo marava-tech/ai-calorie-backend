@@ -73,7 +73,18 @@ async def upload_body_photo(
 
 
 async def _run_analysis(photo_id: str, image_bytes: bytes, angle: str, user_id: str, api_key: str, db):
-    result = await gemini_svc.analyze_body_photo(image_bytes, None, angle, api_key=api_key)
+    prev_image_bytes = None
+    prev = await db.body_photos.find_one(
+        {"angle": angle, "user_id": user_id, "photo_id": {"$ne": photo_id}, "image_url": {"$ne": None}},
+        sort=[("date", -1)],
+    )
+    if prev:
+        try:
+            prev_image_bytes = await minio_client.download_image(prev["image_url"])
+        except Exception as e:
+            logger.warning("Could not fetch previous body photo for comparison: %s", e)
+
+    result = await gemini_svc.analyze_body_photo(image_bytes, prev_image_bytes, angle, api_key=api_key)
     await db.body_photos.update_one(
         {"photo_id": photo_id},
         {"$set": {"analysis": result}},
