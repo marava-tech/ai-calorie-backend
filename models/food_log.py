@@ -4,10 +4,15 @@ from enum import Enum
 
 
 class MealSlot(str, Enum):
+    breakfast = "breakfast"
+    lunch = "lunch"
+    dinner = "dinner"
+    extras = "extras"
+    supplement = "supplement"
+    # Legacy values — kept for backward compatibility
     meal1 = "meal1"
     meal2 = "meal2"
     snack = "snack"
-    supplement = "supplement"
 
 
 class MacroSource(str, Enum):
