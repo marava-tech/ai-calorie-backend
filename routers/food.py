@@ -2,10 +2,10 @@
 import asyncio
 import logging
 import uuid
-import base64
 from datetime import datetime, timezone, date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Form
+
 from bson import ObjectId
 from typing import Optional
 
@@ -22,19 +22,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/food", tags=["food"])
 
 
-async def _resolve_macros(name: str, weight_g: float) -> dict:
+async def _resolve_macros(name: str, weight_g: float, api_key: str) -> dict:
     result = await lookup_macros(name, weight_g)
     if result:
         return result
     # Fallback to Gemini
-    ai_result = await gemini_svc.estimate_macros(name, weight_g)
+    ai_result = await gemini_svc.estimate_macros(name, weight_g, api_key=api_key)
     ai_result["source"] = "ai_estimated"
     return ai_result
 
 
-async def _update_if_log(food_date: str, timestamp: datetime, db):
+async def _update_if_log(food_date: str, timestamp: datetime, user_id: str, db):
     """Derive IF adherence from the eating window in user_profile."""
-    profile = await db.user_profile.find_one({})
+    profile = await db.user_profile.find_one({"user_id": user_id})
     if not profile:
         return
 
@@ -59,56 +59,44 @@ async def _update_if_log(food_date: str, timestamp: datetime, db):
 
     in_window = window_start_min <= food_time <= window_end_min
 
-    existing = await db.if_logs.find_one({"date": food_date})
+    existing = await db.if_logs.find_one({"date": food_date, "user_id": user_id})
     if existing:
         # If any entry is outside window, mark non-adherent
         if not in_window:
             await db.if_logs.update_one(
-                {"date": food_date}, {"$set": {"adhered": False}}
+                {"date": food_date, "user_id": user_id}, {"$set": {"adhered": False}}
             )
     else:
-        await db.if_logs.insert_one({"date": food_date, "adhered": in_window})
+        await db.if_logs.insert_one({"date": food_date, "adhered": in_window, "user_id": user_id})
 
 
 @router.post("/analyze")
 async def analyze_food(
     photo: UploadFile = File(...),
-    _: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_user),
 ):
     db = get_db()
     image_bytes = await photo.read()
     validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
+
+    # Fetch user's API key
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    api_key = (profile or {}).get("openrouter_api_key")
+    if not api_key:
+        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
 
     # Upload to MinIO for storage
     filename = f"{uuid.uuid4()}.jpg"
     image_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_FOOD, filename)
 
     # AI food analysis
-    analysis = await gemini_svc.analyze_food(image_bytes)
+    analysis = await gemini_svc.analyze_food(image_bytes, api_key=api_key)
     items = analysis.get("items", [])
     scale_weight_g = analysis.get("scale_weight_g")
 
-    # Bowl detection — only fetch fields needed for AI matching
-    bowls_docs = await db.bowls.find(
-        {}, {"_id": 1, "name": 1, "tare_weight_g": 1, "image_b64": 1}
-    ).to_list(None)
-    bowl_match = {}
-    if bowls_docs:
-        bowls_for_detection = [
-            {
-                "id": str(b["_id"]),
-                "name": b["name"],
-                "tare_weight_g": b["tare_weight_g"],
-                "image_b64": b.get("image_b64", ""),
-            }
-            for b in bowls_docs
-        ]
-        if any(b["image_b64"] for b in bowls_for_detection):
-            bowl_match = await gemini_svc.detect_bowl(image_bytes, bowls_for_detection)
-
-    # Saved meal similarity check — only fetch name + item names
+    # Saved meal similarity check — only fetch name + item names (scoped to user)
     saved_meals = await db.saved_meals.find(
-        {}, {"_id": 1, "name": 1, "items.name": 1}
+        {"user_id": user_id}, {"_id": 1, "name": 1, "items.name": 1}
     ).to_list(None)
     meal_suggestion = None
     if saved_meals and items:
@@ -132,13 +120,12 @@ async def analyze_food(
 
     # Resolve macros for all detected items in parallel
     macro_list = await asyncio.gather(*[
-        _resolve_macros(item["name"], item["estimated_weight_g"]) for item in items
+        _resolve_macros(item["name"], item["estimated_weight_g"], api_key) for item in items
     ])
     enriched_items = [{**item, **macros} for item, macros in zip(items, macro_list)]
 
     return {
         "items": enriched_items,
-        "bowl_match": bowl_match or None,
         "scale_weight_g": scale_weight_g,
         "image_url": image_url,
         "meal_suggestion": meal_suggestion,
@@ -146,17 +133,23 @@ async def analyze_food(
 
 
 @router.post("/logs", status_code=201)
-async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks, _: str = Depends(get_current_user)):
+async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user)):
     db = get_db()
     now = datetime.now(timezone.utc)
     food_date = now.date().isoformat()
+
+    # Fetch user's API key for macro resolution
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    api_key = (profile or {}).get("openrouter_api_key")
+    if not api_key:
+        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
 
     # Resolve macros for all items in parallel
     resolved_items = []
     total_cal = total_protein = total_carbs = total_fat = 0.0
 
     macro_list = await asyncio.gather(*[
-        _resolve_macros(item.name, item.estimated_weight_g) for item in body.items
+        _resolve_macros(item.name, item.estimated_weight_g, api_key) for item in body.items
     ])
     for item, macros in zip(body.items, macro_list):
         resolved = item.model_dump()
@@ -168,11 +161,11 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
         total_fat += macros.get("fat_g", 0)
 
     doc = {
+        "user_id": user_id,
         "date": food_date,
         "meal_slot": body.meal_slot,
         "items": resolved_items,
         "image_url": body.image_url,
-        "bowl_id": body.bowl_id,
         "note": body.note,
         "totals": {
             "calories_kcal": round(total_cal, 1),
@@ -187,33 +180,33 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
     # Replace any existing supplement entries for today to prevent duplicates
     # when the user re-submits the quiz.
     if body.meal_slot == MealSlot.supplement:
-        await db.food_logs.delete_many({"date": food_date, "meal_slot": MealSlot.supplement.value})
+        await db.food_logs.delete_many({"date": food_date, "meal_slot": MealSlot.supplement.value, "user_id": user_id})
 
     result = await db.food_logs.insert_one(doc)
 
-    background_tasks.add_task(_update_if_log, food_date, now, db)
+    background_tasks.add_task(_update_if_log, food_date, now, user_id, db)
 
     doc["_id"] = str(result.inserted_id)
     return doc
 
 
 @router.delete("/logs/{log_id}", status_code=204)
-async def delete_food_log(log_id: str, _: str = Depends(get_current_user)):
+async def delete_food_log(log_id: str, user_id: str = Depends(get_current_user)):
     db = get_db()
     try:
         oid = ObjectId(log_id)
     except Exception:
         raise HTTPException(400, "Invalid log ID")
-    result = await db.food_logs.delete_one({"_id": oid})
+    result = await db.food_logs.delete_one({"_id": oid, "user_id": user_id})
     if result.deleted_count == 0:
         raise HTTPException(404, "Food log not found")
 
 
 @router.get("/logs")
-async def get_food_logs(date: str, _: str = Depends(get_current_user)):
+async def get_food_logs(date: str, user_id: str = Depends(get_current_user)):
     """date format: YYYY-MM-DD (query param ?date=)"""
     db = get_db()
-    docs = await db.food_logs.find({"date": date}).to_list(None)
+    docs = await db.food_logs.find({"date": date, "user_id": user_id}).to_list(None)
 
     grouped: dict[str, list] = {"meal1": [], "meal2": [], "snack": [], "supplement": []}
     slot_totals: dict[str, dict] = {}
@@ -243,14 +236,14 @@ async def get_food_logs(date: str, _: str = Depends(get_current_user)):
 
 
 @router.get("/daily-totals")
-async def get_daily_totals(days: int = 30, _: str = Depends(get_current_user)):
+async def get_daily_totals(days: int = 30, user_id: str = Depends(get_current_user)):
     """Returns daily aggregated calories + protein for the past N days."""
     db = get_db()
     today = date.today()
-    match_stage: dict = {}
+    match_stage: dict = {"user_id": user_id}
     if days > 0:
         start = (today - timedelta(days=days - 1)).isoformat()
-        match_stage = {"date": {"$gte": start, "$lte": today.isoformat()}}
+        match_stage["date"] = {"$gte": start, "$lte": today.isoformat()}
 
     pipeline = [
         {"$match": match_stage},

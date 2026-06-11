@@ -29,7 +29,6 @@ class FoodLogCreate(BaseModel):
     meal_slot: MealSlot
     items: List[FoodItem]
     image_url: Optional[str] = None
-    bowl_id: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -44,15 +43,7 @@ class AnalyzedItem(BaseModel):
     source: str = "ai"
 
 
-class BowlMatch(BaseModel):
-    bowl_id: Optional[str] = None
-    confidence: float = 0.0
-    bowl_name: Optional[str] = None
-    tare_weight_g: Optional[float] = None
-
-
 class FoodAnalysisResponse(BaseModel):
     items: List[AnalyzedItem]
-    bowl_match: Optional[BowlMatch] = None
     scale_weight_g: Optional[float] = None
     image_url: str

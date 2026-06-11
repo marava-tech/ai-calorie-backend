@@ -8,10 +8,10 @@ router = APIRouter(prefix="/api/body-analysis", tags=["body-analysis"])
 
 
 @router.get("/trend")
-async def body_fat_trend(days: int = 90, _: str = Depends(get_current_user)):
+async def body_fat_trend(days: int = 90, user_id: str = Depends(get_current_user)):
     """Return time-series of body fat midpoint estimates from gym photo analyses."""
     db = get_db()
-    match: dict = {"photos.analysis": {"$ne": None}}
+    match: dict = {"photos.analysis": {"$ne": None}, "user_id": user_id}
     if days > 0:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         match["date"] = {"$gte": cutoff}
@@ -45,5 +45,3 @@ async def body_fat_trend(days: int = 90, _: str = Depends(get_current_user)):
 
     trend = await db.gym_sessions.aggregate(pipeline).to_list(None)
     return {"trend": trend}
-
-

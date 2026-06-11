@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger("fitness_os")
 
 # ─── Required environment variable check ─────────────────────────────────────
-_REQUIRED_ENV = ["MONGODB_URI", "JWT_SECRET", "OPENROUTER_API_KEY", "FIREBASE_PROJECT_ID"]
+_REQUIRED_ENV = ["MONGODB_URI", "JWT_SECRET", "FIREBASE_PROJECT_ID"]
 
 def _check_env():
     missing = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
@@ -30,7 +30,6 @@ def _check_env():
 from routers import (
     auth_router,
     profile,
-    bowls,
     food,
     saved_meals,
     supplements,
@@ -43,6 +42,7 @@ from routers import (
     summary,
     notifications,
     daily_checkin,
+    settings as settings_router,
 )
 
 scheduler = AsyncIOScheduler()
@@ -51,8 +51,7 @@ scheduler = AsyncIOScheduler()
 async def _send_weekly_summary():
     """Send FCM notification for weekly summary every Sunday 8pm."""
     db = get_db()
-    profile_doc = await db.user_profile.find_one({})
-    if profile_doc and profile_doc.get("fcm_token"):
+    async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
         prefs = profile_doc.get("notification_prefs", {})
         if prefs.get("weekly_summary", True):
             week = date.today().strftime("%Y-W%W")
@@ -64,51 +63,47 @@ async def _send_weekly_summary():
                     {"week": week},
                 )
             except Exception as e:
-                logger.error("Failed to send weekly summary FCM: %s", e)
+                logger.error("Failed to send weekly summary FCM for user %s: %s", profile_doc.get("user_id"), e)
 
 
 async def _check_gym_photo_nudge():
     """Send FCM if no gym photo uploaded in last 7 days."""
     db = get_db()
-    profile_doc = await db.user_profile.find_one({})
-    if not profile_doc or not profile_doc.get("fcm_token"):
-        return
-    prefs = profile_doc.get("notification_prefs", {})
-    if not prefs.get("gym_photo_nudge", True):
-        return
-
-    cutoff = (date.today() - timedelta(days=7)).isoformat()
-    recent = await db.gym_sessions.find_one(
-        {"date": {"$gte": cutoff}, "photos": {"$ne": []}}
-    )
-    if not recent:
-        try:
-            await fcm_svc.send_notification(
-                profile_doc["fcm_token"],
-                "Progress Photo Reminder",
-                "No gym photos in 7 days — capture your progress!",
-            )
-        except Exception as e:
-            logger.error("Failed to send gym photo nudge FCM: %s", e)
+    async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
+        prefs = profile_doc.get("notification_prefs", {})
+        if not prefs.get("gym_photo_nudge", True):
+            continue
+        user_id = profile_doc.get("user_id")
+        cutoff = (date.today() - timedelta(days=7)).isoformat()
+        recent = await db.gym_sessions.find_one(
+            {"date": {"$gte": cutoff}, "photos": {"$ne": []}, "user_id": user_id}
+        )
+        if not recent:
+            try:
+                await fcm_svc.send_notification(
+                    profile_doc["fcm_token"],
+                    "Progress Photo Reminder",
+                    "No gym photos in 7 days — capture your progress!",
+                )
+            except Exception as e:
+                logger.error("Failed to send gym photo nudge FCM for user %s: %s", user_id, e)
 
 
 async def _send_daily_quiz_reminder():
     """Send daily 10pm IST check-in reminder (runs at 16:30 UTC)."""
     db = get_db()
-    profile_doc = await db.user_profile.find_one({})
-    if not profile_doc or not profile_doc.get("fcm_token"):
-        return
-    prefs = profile_doc.get("notification_prefs", {})
-    if not prefs.get("daily_checkin_reminder", True):
-        return
-    try:
-        await fcm_svc.send_notification(
-            profile_doc["fcm_token"],
-            "Time for your daily check-in! 📋",
-            "Log your supplements, gym, and sleep for today.",
-        )
-    except Exception as e:
-        logger.error("Failed to send daily quiz reminder FCM: %s", e)
+    async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
+        prefs = profile_doc.get("notification_prefs", {})
+        if not prefs.get("daily_checkin_reminder", True):
+            continue
+        try:
+            await fcm_svc.send_notification(
+                profile_doc["fcm_token"],
+                "Time for your daily check-in!",
+                "Log your supplements, gym, and sleep for today.",
+            )
+        except Exception as e:
+            logger.error("Failed to send daily quiz reminder FCM for user %s: %s", profile_doc.get("user_id"), e)
 
 
 @asynccontextmanager
@@ -138,7 +133,6 @@ app = FastAPI(
 
 app.include_router(auth_router.router)
 app.include_router(profile.router)
-app.include_router(bowls.router)
 app.include_router(food.router)
 app.include_router(saved_meals.router)
 app.include_router(supplements.router)
@@ -151,6 +145,7 @@ app.include_router(streaks.router)
 app.include_router(summary.router)
 app.include_router(notifications.router)
 app.include_router(daily_checkin.router)
+app.include_router(settings_router.router)
 
 
 @app.get("/health")

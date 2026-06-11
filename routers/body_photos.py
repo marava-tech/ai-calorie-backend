@@ -29,12 +29,18 @@ async def upload_body_photo(
     angle: BodyPhotoAngle = Form(...),
     photo_date: str = Form(...),  # YYYY-MM-DD
     photo: UploadFile = File(...),
-    _: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_user),
 ):
     db = get_db()
 
     image_bytes = await photo.read()
     validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
+
+    # Fetch user's API key
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    api_key = (profile or {}).get("openrouter_api_key")
+    if not api_key:
+        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
 
     filename = f"{uuid.uuid4()}.jpg"
     image_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_GYM, filename)
@@ -46,6 +52,7 @@ async def upload_body_photo(
         "angle": angle.value,
         "image_url": image_url,
         "analysis": None,
+        "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
     }
     await db.body_photos.insert_one(doc)
@@ -53,7 +60,7 @@ async def upload_body_photo(
 
     # Run Gemini body analysis async — non-blocking
     try:
-        await _run_analysis(photo_id, image_bytes, angle.value, db)
+        await _run_analysis(photo_id, image_bytes, angle.value, user_id, api_key, db)
     except Exception as e:
         logger.error("Body analysis failed for body_photo %s: %s", photo_id, e)
 
@@ -65,8 +72,8 @@ async def upload_body_photo(
     return doc
 
 
-async def _run_analysis(photo_id: str, image_bytes: bytes, angle: str, db):
-    result = await gemini_svc.analyze_body_photo(image_bytes, None, angle)
+async def _run_analysis(photo_id: str, image_bytes: bytes, angle: str, user_id: str, api_key: str, db):
+    result = await gemini_svc.analyze_body_photo(image_bytes, None, angle, api_key=api_key)
     await db.body_photos.update_one(
         {"photo_id": photo_id},
         {"$set": {"analysis": result}},
@@ -78,15 +85,22 @@ class CompareRequest(BaseModel):
 
 
 @router.post("/compare")
-async def compare_body_photos(req: CompareRequest, _: str = Depends(get_current_user)):
+async def compare_body_photos(req: CompareRequest, user_id: str = Depends(get_current_user)):
     """Compare 2–3 body photos using AI visual progression analysis."""
     if len(req.photo_ids) < 2 or len(req.photo_ids) > 3:
         raise HTTPException(status_code=400, detail="Select 2 or 3 photos to compare")
 
     db = get_db()
+
+    # Fetch user's API key
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    api_key = (profile or {}).get("openrouter_api_key")
+    if not api_key:
+        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
+
     docs = []
     for pid in req.photo_ids:
-        doc = await db.body_photos.find_one({"photo_id": pid})
+        doc = await db.body_photos.find_one({"photo_id": pid, "user_id": user_id})
         if not doc:
             raise HTTPException(status_code=404, detail=f"Photo {pid} not found")
         docs.append(doc)
@@ -107,7 +121,7 @@ async def compare_body_photos(req: CompareRequest, _: str = Depends(get_current_
         })
 
     try:
-        comparison = await gemini_svc.compare_body_photos(photos_payload)
+        comparison = await gemini_svc.compare_body_photos(photos_payload, api_key=api_key)
     except (ValueError, KeyError, json.JSONDecodeError) as e:
         raise HTTPException(status_code=502, detail=f"AI comparison failed: {e}")
 
@@ -121,6 +135,7 @@ async def compare_body_photos(req: CompareRequest, _: str = Depends(get_current_
         "angle": next(iter(angles)),
         "photos": photos_meta,
         "comparison": comparison,
+        "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
     })
 
@@ -132,18 +147,18 @@ async def compare_body_photos(req: CompareRequest, _: str = Depends(get_current_
 
 
 @router.get("/comparisons")
-async def list_comparisons(_: str = Depends(get_current_user)):
+async def list_comparisons(user_id: str = Depends(get_current_user)):
     db = get_db()
-    docs = await db.body_photo_comparisons.find({}).sort("created_at", -1).to_list(None)
+    docs = await db.body_photo_comparisons.find({"user_id": user_id}).sort("created_at", -1).to_list(None)
     for d in docs:
         d["_id"] = str(d["_id"])
     return {"comparisons": docs}
 
 
 @router.get("")
-async def list_body_photos(days: int = 90, _: str = Depends(get_current_user)):
+async def list_body_photos(days: int = 90, user_id: str = Depends(get_current_user)):
     db = get_db()
-    query: dict = {}
+    query: dict = {"user_id": user_id}
     if days > 0:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         query["date"] = {"$gte": cutoff}
