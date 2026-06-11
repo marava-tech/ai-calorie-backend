@@ -33,4 +33,18 @@ async def ensure_indexes():
     await db.daily_checkins.create_index([("date", -1)], background=True)
     await db.gym_sessions.create_index([("photos.analysis", 1), ("date", 1)], background=True)
     await db.weight_photos.create_index([("photo_id", 1)], background=True)
+    # user_id compound indexes for multi-user isolation
+    await db.user_profile.create_index([("user_id", 1)], background=True, unique=True)
+    await db.food_logs.create_index([("user_id", 1), ("date", 1)], background=True)
+    await db.supplement_logs.create_index([("user_id", 1), ("supplement_id", 1)], background=True)
+    await db.gym_sessions.create_index([("user_id", 1), ("date", 1)], background=True)
+    await db.sleep_logs.create_index([("user_id", 1), ("date", 1)], background=True)
+    await db.daily_checkins.create_index([("user_id", 1), ("date", 1)], background=True)
+    await db.supplements.create_index([("user_id", 1)], background=True)
+    await db.saved_meals.create_index([("user_id", 1)], background=True)
+    await db.weight_photos.create_index([("user_id", 1), ("date", 1)], background=True)
+    await db.if_logs.create_index([("user_id", 1), ("date", 1)], background=True)
+    # OTP expiry — MongoDB auto-deletes documents after expires_at
+    await db.otp_requests.create_index("expires_at", expireAfterSeconds=0, background=True)
+    await db.users.create_index("email", unique=True, sparse=True, background=True)
     logger.info("MongoDB indexes ensured")

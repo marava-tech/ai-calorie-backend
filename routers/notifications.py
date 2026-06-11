@@ -12,10 +12,10 @@ class TokenRegister(BaseModel):
 
 
 @router.post("/register-token")
-async def register_token(body: TokenRegister, _: str = Depends(get_current_user)):
+async def register_token(body: TokenRegister, user_id: str = Depends(get_current_user)):
     db = get_db()
     result = await db.user_profile.update_one(
-        {}, {"$set": {"fcm_token": body.fcm_token}}
+        {"user_id": user_id}, {"$set": {"fcm_token": body.fcm_token}}
     )
     if result.matched_count == 0:
         raise HTTPException(404, "Profile not found — complete onboarding first")

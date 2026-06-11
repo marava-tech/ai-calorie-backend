@@ -145,15 +145,15 @@ async def calculate_weekly_gym_streak(gym_dates: list[str], min_days: int) -> di
     }
 
 
-async def calculate_all_streaks() -> dict:
+async def calculate_all_streaks(user_id: str) -> dict:
     db = get_db()
 
-    profile = await db.user_profile.find_one({})
+    profile = await db.user_profile.find_one({"user_id": user_id})
     min_days = (profile or {}).get("gym_streak_min_days_per_week", 5)
 
     # Gym attendance comes from daily check-ins (gym: True), not gym_sessions
     # (gym_sessions is used for progress photos, not attendance tracking)
-    gym_docs = await db.daily_checkins.find({"gym": True}, {"date": 1}).to_list(None)
+    gym_docs = await db.daily_checkins.find({"gym": True, "user_id": user_id}, {"date": 1}).to_list(None)
     gym_date_list = [d["date"] for d in gym_docs]
     gym_weekly = await calculate_weekly_gym_streak(gym_date_list, min_days)
 
@@ -162,20 +162,15 @@ async def calculate_all_streaks() -> dict:
     gym_weekly["current_days"] = gym_days_current
     gym_weekly["best_days"] = gym_days_best
 
-    food_docs = await db.food_logs.find({}, {"date": 1}).to_list(None)
+    food_docs = await db.food_logs.find({"user_id": user_id}, {"date": 1}).to_list(None)
     log_current, log_best = await consecutive_days(list({d["date"] for d in food_docs}))
 
-    if_docs = await db.daily_checkins.find({"if_followed": True}, {"date": 1}).to_list(None)
+    if_docs = await db.daily_checkins.find({"if_followed": True, "user_id": user_id}, {"date": 1}).to_list(None)
     if_current, if_best = await consecutive_days([d["date"] for d in if_docs])
 
+    # Supplement streak: any checkin that has at least one supplement_entry with taken=True
     supp_docs = await db.daily_checkins.find(
-        {"$or": [
-            {"fish_oil": True},
-            {"magnesium": True},
-            {"vitamin_d3": True},
-            {"multi_vitamin": True},
-            {"whey_protein": True},
-        ]},
+        {"supplement_entries": {"$elemMatch": {"taken": True}}, "user_id": user_id},
         {"date": 1},
     ).to_list(None)
     supp_current, supp_best = await consecutive_days(list({d["date"] for d in supp_docs}))

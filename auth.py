@@ -1,33 +1,27 @@
-"""JWT authentication — signup/login + get_current_user dependency."""
+"""JWT authentication — OTP-based email auth + get_current_user dependency."""
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-import bcrypt
 
 _jwt_secret = os.environ.get("JWT_SECRET")
 if not _jwt_secret:
     raise RuntimeError("JWT_SECRET environment variable is not set")
 SECRET_KEY = _jwt_secret
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_DAYS = 30
+
+# JWT_EXPIRATION in milliseconds (default 15 days)
+_expiration_ms = int(os.environ.get("JWT_EXPIRATION", 1296000000))
+_expiration_s = _expiration_ms // 1000
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
-
-
 def create_access_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
-    return jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+    exp = int(datetime.now(timezone.utc).timestamp()) + _expiration_s
+    return jwt.encode({"sub": user_id, "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def get_current_user(
