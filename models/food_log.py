@@ -18,10 +18,10 @@ class MacroSource(str, Enum):
 class FoodItem(BaseModel):
     name: str
     estimated_weight_g: float
-    calories_kcal: float
-    protein_g: float
-    carbs_g: float
-    fat_g: float
+    calories_kcal: Optional[float] = None
+    protein_g: Optional[float] = None
+    carbs_g: Optional[float] = None
+    fat_g: Optional[float] = None
     macro_source: MacroSource = MacroSource.ai_estimated
 
 

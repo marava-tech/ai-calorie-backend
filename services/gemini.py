@@ -27,10 +27,17 @@ def _parse_json(text: str | None) -> dict:
     text = text.strip()
     text = re.sub(r"^```(?:json)?\n?", "", text)
     text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # LLM sometimes returns truncated output — extract the first valid JSON object
+        match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        raise
 
 
-async def _chat(model: str, messages: list[dict], api_key: str, system: str | None = None) -> str:
+async def _chat(model: str, messages: list[dict], api_key: str, system: str | None = None, max_tokens: int | None = None) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -39,6 +46,8 @@ async def _chat(model: str, messages: list[dict], api_key: str, system: str | No
     payload: dict = {"model": model, "messages": messages}
     if system:
         payload["messages"] = [{"role": "system", "content": system}] + messages
+    if max_tokens:
+        payload["max_tokens"] = max_tokens
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(_OPENROUTER_URL, headers=headers, json=payload)
         resp.raise_for_status()
@@ -226,5 +235,5 @@ async def estimate_macros(food_name: str, weight_g: float, api_key: str) -> dict
     """Fallback macro estimation when OpenFoodFacts has no match."""
     prompt = _MACRO_PROMPT_TEMPLATE.format(food_name=food_name, weight_g=weight_g)
     messages = [{"role": "user", "content": prompt}]
-    text = await _chat(_TEXT_MODEL, messages, api_key=api_key, system=_MACRO_SYSTEM)
+    text = await _chat(_TEXT_MODEL, messages, api_key=api_key, system=_MACRO_SYSTEM, max_tokens=200)
     return _parse_json(text)
