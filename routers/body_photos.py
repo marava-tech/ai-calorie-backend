@@ -36,12 +36,6 @@ async def upload_body_photo(
     image_bytes = await photo.read()
     validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
 
-    # Fetch user's API key
-    profile = await db.user_profile.find_one({"user_id": user_id})
-    api_key = (profile or {}).get("openrouter_api_key")
-    if not api_key:
-        raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
-
     filename = f"{uuid.uuid4()}.jpg"
     image_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_GYM, filename)
 
@@ -51,44 +45,12 @@ async def upload_body_photo(
         "date": photo_date,
         "angle": angle.value,
         "image_url": image_url,
-        "analysis": None,
         "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
     }
     await db.body_photos.insert_one(doc)
     doc["_id"] = str(doc.pop("_id", photo_id))
-
-    # Run Gemini body analysis async — non-blocking
-    try:
-        await _run_analysis(photo_id, image_bytes, angle.value, user_id, api_key, db)
-    except Exception as e:
-        logger.error("Body analysis failed for body_photo %s: %s", photo_id, e)
-
-    # Return updated doc with analysis if it completed
-    updated = await db.body_photos.find_one({"photo_id": photo_id})
-    if updated:
-        updated["_id"] = str(updated["_id"])
-        return updated
     return doc
-
-
-async def _run_analysis(photo_id: str, image_bytes: bytes, angle: str, user_id: str, api_key: str, db):
-    prev_image_bytes = None
-    prev = await db.body_photos.find_one(
-        {"angle": angle, "user_id": user_id, "photo_id": {"$ne": photo_id}, "image_url": {"$ne": None}},
-        sort=[("date", -1)],
-    )
-    if prev:
-        try:
-            prev_image_bytes = await minio_client.download_image(prev["image_url"])
-        except Exception as e:
-            logger.warning("Could not fetch previous body photo for comparison: %s", e)
-
-    result = await gemini_svc.analyze_body_photo(image_bytes, prev_image_bytes, angle, api_key=api_key)
-    await db.body_photos.update_one(
-        {"photo_id": photo_id},
-        {"$set": {"analysis": result}},
-    )
 
 
 class CompareRequest(BaseModel):
