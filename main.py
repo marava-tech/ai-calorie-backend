@@ -1,9 +1,11 @@
 """Fitness OS — FastAPI backend (port 8850)."""
+import asyncio
 import os
 import logging
 import logging.config
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, date, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -51,30 +53,42 @@ scheduler = AsyncIOScheduler()
 async def _send_weekly_summary():
     """Send FCM notification for weekly summary every Sunday 8pm."""
     db = get_db()
-    async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
-        prefs = profile_doc.get("notification_prefs", {})
-        if prefs.get("weekly_summary", True):
-            week = datetime.now(timezone.utc).date().strftime("%Y-W%W")
-            try:
-                await fcm_svc.send_notification(
-                    profile_doc["fcm_token"],
-                    "Weekly Summary Ready",
-                    "Your fitness week is complete — tap to see your summary.",
-                    {"week": week},
-                )
-            except Exception as e:
-                logger.error("Failed to send weekly summary FCM for user %s: %s", profile_doc.get("user_id"), e)
+    iso = datetime.now(timezone.utc).date().isocalendar()
+    week = f"{iso.year}-W{iso.week:02d}"
+    profiles = await db.user_profile.find({"fcm_token": {"$ne": None}}).to_list(None)
+
+    async def _send(profile_doc):
+        if not profile_doc.get("notification_prefs", {}).get("weekly_summary", True):
+            return
+        try:
+            await fcm_svc.send_notification(
+                profile_doc["fcm_token"],
+                "Weekly Summary Ready",
+                "Your fitness week is complete — tap to see your summary.",
+                {"week": week},
+            )
+        except Exception as e:
+            logger.error("Failed to send weekly summary FCM for user %s: %s", profile_doc.get("user_id"), e)
+
+    await asyncio.gather(*[_send(p) for p in profiles])
 
 
 async def _check_gym_photo_nudge():
     """Send FCM if no gym photo uploaded in last 7 days."""
     db = get_db()
-    async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
-        prefs = profile_doc.get("notification_prefs", {})
-        if not prefs.get("gym_photo_nudge", True):
-            continue
+    profiles = await db.user_profile.find({"fcm_token": {"$ne": None}}).to_list(None)
+
+    async def _send(profile_doc):
+        if not profile_doc.get("notification_prefs", {}).get("gym_photo_nudge", True):
+            return
         user_id = profile_doc.get("user_id")
-        cutoff = (date.today() - timedelta(days=7)).isoformat()
+        tz_name = profile_doc.get("user_timezone", "UTC")
+        try:
+            user_tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            user_tz = ZoneInfo("UTC")
+        user_today = datetime.now(user_tz).date()
+        cutoff = (user_today - timedelta(days=7)).isoformat()
         recent = await db.gym_sessions.find_one(
             {"date": {"$gte": cutoff}, "photos": {"$ne": []}, "user_id": user_id}
         )
@@ -88,22 +102,28 @@ async def _check_gym_photo_nudge():
             except Exception as e:
                 logger.error("Failed to send gym photo nudge FCM for user %s: %s", user_id, e)
 
+    await asyncio.gather(*[_send(p) for p in profiles])
+
 
 async def _send_daily_quiz_reminder():
     """Send daily 10pm IST check-in reminder (runs at 16:30 UTC)."""
     db = get_db()
-    async for profile_doc in db.user_profile.find({"fcm_token": {"$ne": None}}):
-        prefs = profile_doc.get("notification_prefs", {})
-        if not prefs.get("daily_checkin_reminder", True):
-            continue
+    profiles = await db.user_profile.find({"fcm_token": {"$ne": None}}).to_list(None)
+
+    async def _send(profile_doc):
+        if not profile_doc.get("notification_prefs", {}).get("daily_checkin_reminder", True):
+            return
         try:
             await fcm_svc.send_notification(
                 profile_doc["fcm_token"],
                 "Time for your daily check-in!",
                 "Log your supplements, gym, and sleep for today.",
+                {"type": "daily_quiz"},
             )
         except Exception as e:
             logger.error("Failed to send daily quiz reminder FCM for user %s: %s", profile_doc.get("user_id"), e)
+
+    await asyncio.gather(*[_send(p) for p in profiles])
 
 
 @asynccontextmanager
