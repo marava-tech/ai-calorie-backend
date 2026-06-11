@@ -33,7 +33,7 @@ def _derive_quality(hours: float, thresholds: dict) -> SleepQuality:
 
 
 @router.post("", status_code=201)
-async def log_sleep(body: SleepLogCreate, _: str = Depends(get_current_user)):
+async def log_sleep(body: SleepLogCreate, user_id: str = Depends(get_current_user)):
     # Validate hours_slept range
     if not (1.0 <= body.hours_slept <= 12.0):
         raise HTTPException(422, "hours_slept must be between 1 and 12")
@@ -45,16 +45,16 @@ async def log_sleep(body: SleepLogCreate, _: str = Depends(get_current_user)):
         raise HTTPException(422, "date must be today or yesterday")
 
     db = get_db()
-    profile = await db.user_profile.find_one({})
+    profile = await db.user_profile.find_one({"user_id": user_id})
     raw_thresholds = (profile or {}).get("sleep_thresholds", _DEFAULT_THRESHOLDS)
     thresholds = raw_thresholds if isinstance(raw_thresholds, dict) else _DEFAULT_THRESHOLDS
 
     quality = _derive_quality(body.hours_slept, thresholds)
 
-    existing = await db.sleep_logs.find_one({"date": body.date})
+    existing = await db.sleep_logs.find_one({"date": body.date, "user_id": user_id})
     if existing:
         await db.sleep_logs.update_one(
-            {"date": body.date},
+            {"date": body.date, "user_id": user_id},
             {"$set": {
                 "hours_slept": body.hours_slept,
                 "quality": quality.value,
@@ -70,6 +70,7 @@ async def log_sleep(body: SleepLogCreate, _: str = Depends(get_current_user)):
         "date": body.date,
         "hours_slept": body.hours_slept,
         "quality": quality.value,
+        "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
     }
     result = await db.sleep_logs.insert_one(doc)
@@ -78,9 +79,9 @@ async def log_sleep(body: SleepLogCreate, _: str = Depends(get_current_user)):
 
 
 @router.get("")
-async def get_sleep_logs(days: int = 30, _: str = Depends(get_current_user)):
+async def get_sleep_logs(days: int = 30, user_id: str = Depends(get_current_user)):
     db = get_db()
-    query: dict = {}
+    query: dict = {"user_id": user_id}
     if days > 0:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         query["date"] = {"$gte": cutoff}
@@ -91,13 +92,13 @@ async def get_sleep_logs(days: int = 30, _: str = Depends(get_current_user)):
 
 
 @router.get("/weekly-averages")
-async def weekly_sleep_averages(_: str = Depends(get_current_user)):
+async def weekly_sleep_averages(user_id: str = Depends(get_current_user)):
     """Return per-ISO-week average sleep duration, grouped Mon–Sun, sorted ascending."""
     from collections import defaultdict
     from datetime import date as _date
 
     db = get_db()
-    docs = await db.sleep_logs.find({"hours_slept": {"$ne": None}}).sort("date", 1).to_list(None)
+    docs = await db.sleep_logs.find({"hours_slept": {"$ne": None}, "user_id": user_id}).sort("date", 1).to_list(None)
 
     week_data: dict[str, list[float]] = defaultdict(list)
     for doc in docs:
@@ -118,4 +119,3 @@ async def weekly_sleep_averages(_: str = Depends(get_current_user)):
         })
 
     return {"weeks": weeks[-4:]}
-

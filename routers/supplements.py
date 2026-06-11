@@ -24,10 +24,11 @@ def _serialize(doc: dict) -> dict:
 # ─── Supplement presets ──────────────────────────────────────────────────────
 
 @router.post("", status_code=201)
-async def create_supplement(body: SupplementCreate, _: str = Depends(get_current_user)):
+async def create_supplement(body: SupplementCreate, user_id: str = Depends(get_current_user)):
     db = get_db()
     doc = {
         **body.model_dump(),
+        "user_id": user_id,
         "current_streak": 0,
         "best_streak": 0,
         "created_at": datetime.now(timezone.utc),
@@ -40,23 +41,23 @@ async def create_supplement(body: SupplementCreate, _: str = Depends(get_current
 
 @router.get("")
 async def list_supplements(
-    skip: int = 0, limit: int = 50, _: str = Depends(get_current_user)
+    skip: int = 0, limit: int = 50, user_id: str = Depends(get_current_user)
 ):
     db = get_db()
-    docs = await db.supplements.find({}).skip(skip).limit(limit).to_list(None)
+    docs = await db.supplements.find({"user_id": user_id}).skip(skip).limit(limit).to_list(None)
     return [_serialize(d) for d in docs]
 
 
 @router.patch("/{supp_id}")
 async def update_supplement(
-    supp_id: str, body: SupplementPatch, _: str = Depends(get_current_user)
+    supp_id: str, body: SupplementPatch, user_id: str = Depends(get_current_user)
 ):
     db = get_db()
     oid = parse_object_id(supp_id, "supp_id")
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No fields provided")
-    result = await db.supplements.update_one({"_id": oid}, {"$set": update_data})
+    result = await db.supplements.update_one({"_id": oid, "user_id": user_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(404, "Supplement not found")
     doc = await db.supplements.find_one({"_id": oid})
@@ -64,10 +65,10 @@ async def update_supplement(
 
 
 @router.delete("/{supp_id}", status_code=204)
-async def delete_supplement(supp_id: str, _: str = Depends(get_current_user)):
+async def delete_supplement(supp_id: str, user_id: str = Depends(get_current_user)):
     db = get_db()
     oid = parse_object_id(supp_id, "supp_id")
-    result = await db.supplements.delete_one({"_id": oid})
+    result = await db.supplements.delete_one({"_id": oid, "user_id": user_id})
     if result.deleted_count == 0:
         raise HTTPException(404, "Supplement not found")
 
@@ -75,15 +76,15 @@ async def delete_supplement(supp_id: str, _: str = Depends(get_current_user)):
 # ─── Supplement logs ─────────────────────────────────────────────────────────
 
 @router.post("/logs", status_code=201)
-async def log_supplement(body: SupplementLogCreate, _: str = Depends(get_current_user)):
+async def log_supplement(body: SupplementLogCreate, user_id: str = Depends(get_current_user)):
     db = get_db()
-    supp = await db.supplements.find_one({"_id": parse_object_id(body.supplement_id, "supplement_id")})
+    supp = await db.supplements.find_one({"_id": parse_object_id(body.supplement_id, "supplement_id"), "user_id": user_id})
     if not supp:
         raise HTTPException(404, "Supplement not found")
 
     # Upsert: allow one log per supplement per date
     existing = await db.supplement_logs.find_one(
-        {"supplement_id": body.supplement_id, "date": body.date}
+        {"supplement_id": body.supplement_id, "date": body.date, "user_id": user_id}
     )
     if existing:
         await db.supplement_logs.update_one(
@@ -98,23 +99,24 @@ async def log_supplement(body: SupplementLogCreate, _: str = Depends(get_current
         "supplement_name": supp["name"],
         "date": body.date,
         "units_taken": body.units_taken,
+        "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
     }
     result = await db.supplement_logs.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
 
     # Update streak for this supplement
-    await _update_supplement_streak(body.supplement_id, db)
+    await _update_supplement_streak(body.supplement_id, user_id, db)
 
     return doc
 
 
 @router.get("/logs")
-async def get_supplement_logs(date_str: str, _: str = Depends(get_current_user)):
+async def get_supplement_logs(date_str: str, user_id: str = Depends(get_current_user)):
     """Returns checklist: all supplements with taken status for the date."""
     db = get_db()
-    supplements = await db.supplements.find({}).to_list(None)
-    logs = await db.supplement_logs.find({"date": date_str}).to_list(None)
+    supplements = await db.supplements.find({"user_id": user_id}).to_list(None)
+    logs = await db.supplement_logs.find({"date": date_str, "user_id": user_id}).to_list(None)
     logs_by_id = {l["supplement_id"]: l for l in logs}
     taken_ids = set(logs_by_id.keys())
 
@@ -142,13 +144,13 @@ async def get_supplement_logs(date_str: str, _: str = Depends(get_current_user))
     return {"date": date_str, "checklist": checklist}
 
 
-async def _update_supplement_streak(supplement_id: str, db):
+async def _update_supplement_streak(supplement_id: str, user_id: str, db):
     logs = await db.supplement_logs.find(
-        {"supplement_id": supplement_id}, {"date": 1}
+        {"supplement_id": supplement_id, "user_id": user_id}, {"date": 1}
     ).to_list(None)
     current, best = await consecutive_days([l["date"] for l in logs])
     await db.supplements.update_one(
-        {"_id": parse_object_id(supplement_id, "supplement_id")},
+        {"_id": parse_object_id(supplement_id, "supplement_id"), "user_id": user_id},
         {"$set": {"current_streak": current, "best_streak": best}},
     )
 
@@ -159,22 +161,22 @@ async def _update_supplement_streak(supplement_id: str, db):
 async def supplement_correlation(
     supp_id: str,
     other: str = "sleep",
-    _: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_user),
 ):
     """Compare sleep quality on supplement-taken nights vs not-taken nights."""
     db = get_db()
 
-    supp = await db.supplements.find_one({"_id": parse_object_id(supp_id, "supp_id")})
+    supp = await db.supplements.find_one({"_id": parse_object_id(supp_id, "supp_id"), "user_id": user_id})
     if not supp:
         raise HTTPException(404, "Supplement not found")
 
     if other != "sleep":
         raise HTTPException(400, "Only 'sleep' correlation supported")
 
-    supp_logs = await db.supplement_logs.find({"supplement_id": supp_id}, {"date": 1}).to_list(None)
+    supp_logs = await db.supplement_logs.find({"supplement_id": supp_id, "user_id": user_id}, {"date": 1}).to_list(None)
     supp_dates = {l["date"] for l in supp_logs}
 
-    sleep_logs = await db.sleep_logs.find({}).to_list(None)
+    sleep_logs = await db.sleep_logs.find({"user_id": user_id}).to_list(None)
 
     QUALITY_SCORE = {"worst": 1, "bad": 2, "average": 3, "good": 4, "better": 5}
 

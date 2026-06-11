@@ -22,7 +22,7 @@ async def upload_weight_photo(
     photo_date: str = Form(...),
     weight_kg: Optional[float] = Form(None),
     photo: Optional[UploadFile] = File(None),
-    username: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_user),
 ):
     if weight_kg is None and (photo is None or photo.size == 0):
         raise HTTPException(status_code=422, detail="At least one of weight_kg or photo must be provided")
@@ -42,6 +42,7 @@ async def upload_weight_photo(
         "date": photo_date,
         "weight_kg": weight_kg,
         "image_url": image_url,
+        "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
     }
     await db.weight_photos.insert_one(doc)
@@ -50,7 +51,7 @@ async def upload_weight_photo(
     # Recalculate TDEE when weight is provided, but preserve any custom goal overrides.
     if weight_kg is not None:
         try:
-            profile = await db.user_profile.find_one({})
+            profile = await db.user_profile.find_one({"user_id": user_id})
             if profile:
                 old_goal = profile.get("goal_kcal", 0)
                 gym_days = profile.get("gym_days") or []
@@ -63,7 +64,7 @@ async def upload_weight_photo(
                         tdee[field] = profile[field]
 
                 await db.user_profile.update_one(
-                    {}, {"$set": {**tdee, "weight_kg": weight_kg}}
+                    {"user_id": user_id}, {"$set": {**tdee, "weight_kg": weight_kg}}
                 )
                 if abs(tdee["goal_kcal"] - old_goal) > 50 and profile.get("fcm_token"):
                     try:
@@ -84,10 +85,10 @@ async def upload_weight_photo(
 async def list_weight_photos(
     days: int = 0,
     limit: int = 50,
-    _: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_user),
 ):
     db = get_db()
-    query: dict = {}
+    query: dict = {"user_id": user_id}
     if days > 0:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         query["date"] = {"$gte": cutoff}
@@ -98,13 +99,13 @@ async def list_weight_photos(
 
 
 @router.get("/weekly-averages")
-async def weekly_weight_averages(_: str = Depends(get_current_user)):
+async def weekly_weight_averages(user_id: str = Depends(get_current_user)):
     """Return per-ISO-week average weight, grouped Mon–Sun, sorted ascending."""
     from collections import defaultdict
     from datetime import date as _date
 
     db = get_db()
-    docs = await db.weight_photos.find({"weight_kg": {"$ne": None}}).sort("date", 1).to_list(None)
+    docs = await db.weight_photos.find({"weight_kg": {"$ne": None}, "user_id": user_id}).sort("date", 1).to_list(None)
 
     week_data: dict[str, list[float]] = defaultdict(list)
     for doc in docs:
@@ -128,8 +129,8 @@ async def weekly_weight_averages(_: str = Depends(get_current_user)):
 
 
 @router.delete("/{photo_id}", status_code=204)
-async def delete_weight_photo(photo_id: str, _: str = Depends(get_current_user)):
+async def delete_weight_photo(photo_id: str, user_id: str = Depends(get_current_user)):
     db = get_db()
-    result = await db.weight_photos.delete_one({"photo_id": photo_id})
+    result = await db.weight_photos.delete_one({"photo_id": photo_id, "user_id": user_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Weight photo not found")

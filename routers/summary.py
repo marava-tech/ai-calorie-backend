@@ -11,11 +11,11 @@ router = APIRouter(prefix="/api/summary", tags=["summary"])
 
 
 @router.get("")
-async def get_day_summary(date: str, _: str = Depends(get_current_user)):
+async def get_day_summary(date: str, user_id: str = Depends(get_current_user)):
     """date format: YYYY-MM-DD — returns all tracked data for that day."""
     db = get_db()
 
-    food_docs = await db.food_logs.find({"date": date}).to_list(None)
+    food_docs = await db.food_logs.find({"date": date, "user_id": user_id}).to_list(None)
     food_totals = {"calories_kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
     for doc in food_docs:
         t = doc.get("totals", {})
@@ -24,7 +24,7 @@ async def get_day_summary(date: str, _: str = Depends(get_current_user)):
     food_summary = {k: round(v, 1) for k, v in food_totals.items()}
     food_summary["entries_count"] = len(food_docs)
 
-    sleep_doc = await db.sleep_logs.find_one({"date": date})
+    sleep_doc = await db.sleep_logs.find_one({"date": date, "user_id": user_id})
     sleep_summary = None
     if sleep_doc:
         sleep_summary = {
@@ -32,8 +32,8 @@ async def get_day_summary(date: str, _: str = Depends(get_current_user)):
             "quality": sleep_doc.get("quality"),
         }
 
-    gym_session = await db.gym_sessions.find_one({"date": date, "attended": True})
-    checkin = await db.daily_checkins.find_one({"date": date})
+    gym_session = await db.gym_sessions.find_one({"date": date, "attended": True, "user_id": user_id})
+    checkin = await db.daily_checkins.find_one({"date": date, "user_id": user_id})
     gym_attended = bool(gym_session) or bool((checkin or {}).get("gym"))
     workout_type = None
     if gym_session:
@@ -43,24 +43,11 @@ async def get_day_summary(date: str, _: str = Depends(get_current_user)):
 
     supp_names = []
     if checkin:
-        supplement_map = {
-            "fish_oil":     ("Fish Oil",     "fish_oil_caps",      "cap"),
-            "magnesium":    ("Magnesium",    "magnesium_caps",     "cap"),
-            "vitamin_d3":   ("Vitamin D3",   "vitamin_d3_caps",    "cap"),
-            "multi_vitamin":("Multi Vitamin","multi_vitamin_caps",  "cap"),
-            "whey_protein": ("Whey Protein", "whey_protein_scoops","scoop"),
-        }
-        for key, (label, count_key, unit) in supplement_map.items():
-            if checkin.get(key):
-                count = checkin.get(count_key)
-                supp_names.append({"name": label, "count": count, "unit": unit})
-        supp_data = checkin.get("supplement_data") or {}
-        for sid, sval in supp_data.items():
-            if isinstance(sval, dict) and sval.get("taken"):
-                units = sval.get("units")
-                supp_names.append({"name": sid, "count": units, "unit": "unit"})
+        for entry in checkin.get("supplement_entries") or []:
+            if entry.get("taken"):
+                supp_names.append({"name": entry["name"], "count": entry.get("quantity"), "unit": entry.get("unit")})
 
-    weight_doc = await db.weight_photos.find_one({"date": date, "weight_kg": {"$ne": None}})
+    weight_doc = await db.weight_photos.find_one({"date": date, "weight_kg": {"$ne": None}, "user_id": user_id})
     weight_summary = {"weight_kg": weight_doc["weight_kg"]} if weight_doc else None
 
     if_followed = (checkin or {}).get("if_followed")
@@ -86,7 +73,7 @@ def _week_dates(week_str: str) -> tuple[str, str]:
 
 
 @router.get("/weekly")
-async def weekly_summary(week: str, _: str = Depends(get_current_user)):
+async def weekly_summary(week: str, user_id: str = Depends(get_current_user)):
     """week format: YYYY-WN (e.g. 2026-W21)"""
     try:
         # Normalize: "YYYY-WW" or "YYYY-WN"
@@ -98,7 +85,7 @@ async def weekly_summary(week: str, _: str = Depends(get_current_user)):
         raise HTTPException(400, "Invalid week format. Use YYYY-WN (e.g. 2026-W21)")
 
     db = get_db()
-    date_filter = {"date": {"$gte": start_date, "$lte": end_date}}
+    date_filter = {"date": {"$gte": start_date, "$lte": end_date}, "user_id": user_id}
 
     # Food logs
     food_logs = await db.food_logs.find(date_filter).to_list(None)
@@ -151,7 +138,7 @@ async def weekly_summary(week: str, _: str = Depends(get_current_user)):
             best_photo = log["image_url"]
             break
 
-    profile = await db.user_profile.find_one({})
+    profile = await db.user_profile.find_one({"user_id": user_id})
     goal_kcal = profile.get("goal_kcal", 0) if profile else 0
 
     return {
