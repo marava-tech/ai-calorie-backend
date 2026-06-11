@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pymongo import ReturnDocument
 from pydantic import BaseModel
 
 from auth import get_current_user
@@ -68,18 +69,12 @@ async def upsert_checkin(body: CheckinCreate, user_id: str = Depends(get_current
     data = {k: v for k, v in body.model_dump().items() if k != "date" and v is not None}
     now = datetime.now(timezone.utc)
 
-    existing = await db.daily_checkins.find_one({"date": body.date, "user_id": user_id})
-    if existing:
-        await db.daily_checkins.update_one(
-            {"date": body.date, "user_id": user_id},
-            {"$set": {**data, "updated_at": now}},
-        )
-        doc = await db.daily_checkins.find_one({"date": body.date, "user_id": user_id})
-    else:
-        doc = {"date": body.date, "user_id": user_id, **data, "created_at": now, "updated_at": now}
-        result = await db.daily_checkins.insert_one(doc)
-        doc["id"] = str(result.inserted_id)
-        doc.pop("_id", None)
+    doc = await db.daily_checkins.find_one_and_update(
+        {"date": body.date, "user_id": user_id},
+        {"$set": {**data, "updated_at": now}, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
 
     if body.supplement_entries:
         entries = [e.model_dump() for e in body.supplement_entries]

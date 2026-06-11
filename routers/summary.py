@@ -1,4 +1,5 @@
 """Summary aggregation — daily and weekly views."""
+import asyncio
 import logging
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,7 +16,14 @@ async def get_day_summary(date: str, user_id: str = Depends(get_current_user)):
     """date format: YYYY-MM-DD — returns all tracked data for that day."""
     db = get_db()
 
-    food_docs = await db.food_logs.find({"date": date, "user_id": user_id}).to_list(None)
+    food_docs, sleep_doc, gym_session, checkin, weight_doc = await asyncio.gather(
+        db.food_logs.find({"date": date, "user_id": user_id}).to_list(None),
+        db.sleep_logs.find_one({"date": date, "user_id": user_id}),
+        db.gym_sessions.find_one({"date": date, "attended": True, "user_id": user_id}),
+        db.daily_checkins.find_one({"date": date, "user_id": user_id}),
+        db.weight_photos.find_one({"date": date, "weight_kg": {"$ne": None}, "user_id": user_id}),
+    )
+
     food_totals = {"calories_kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
     for doc in food_docs:
         t = doc.get("totals", {})
@@ -24,7 +32,6 @@ async def get_day_summary(date: str, user_id: str = Depends(get_current_user)):
     food_summary = {k: round(v, 1) for k, v in food_totals.items()}
     food_summary["entries_count"] = len(food_docs)
 
-    sleep_doc = await db.sleep_logs.find_one({"date": date, "user_id": user_id})
     sleep_summary = None
     if sleep_doc:
         sleep_summary = {
@@ -32,8 +39,6 @@ async def get_day_summary(date: str, user_id: str = Depends(get_current_user)):
             "quality": sleep_doc.get("quality"),
         }
 
-    gym_session = await db.gym_sessions.find_one({"date": date, "attended": True, "user_id": user_id})
-    checkin = await db.daily_checkins.find_one({"date": date, "user_id": user_id})
     gym_attended = bool(gym_session) or bool((checkin or {}).get("gym"))
     workout_type = None
     if gym_session:
@@ -46,8 +51,6 @@ async def get_day_summary(date: str, user_id: str = Depends(get_current_user)):
         for entry in checkin.get("supplement_entries") or []:
             if entry.get("taken"):
                 supp_names.append({"name": entry["name"], "count": entry.get("quantity"), "unit": entry.get("unit")})
-
-    weight_doc = await db.weight_photos.find_one({"date": date, "weight_kg": {"$ne": None}, "user_id": user_id})
     weight_summary = {"weight_kg": weight_doc["weight_kg"]} if weight_doc else None
 
     if_followed = (checkin or {}).get("if_followed")
