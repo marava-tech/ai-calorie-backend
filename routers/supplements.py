@@ -60,7 +60,7 @@ async def update_supplement(
     result = await db.supplements.update_one({"_id": oid, "user_id": user_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(404, "Supplement not found")
-    doc = await db.supplements.find_one({"_id": oid})
+    doc = await db.supplements.find_one({"_id": oid, "user_id": user_id})
     return _serialize(doc)
 
 

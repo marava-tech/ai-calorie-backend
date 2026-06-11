@@ -62,7 +62,7 @@ async def update_saved_meal(
     result = await db.saved_meals.update_one({"_id": oid, "user_id": user_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(404, "Saved meal not found")
-    doc = await db.saved_meals.find_one({"_id": oid})
+    doc = await db.saved_meals.find_one({"_id": oid, "user_id": user_id})
     return _serialize(doc)
 
 
@@ -96,6 +96,6 @@ async def use_saved_meal(meal_id: str, meal_slot: str, user_id: str = Depends(ge
         "created_at": now,
     }
     result = await db.food_logs.insert_one(doc)
-    await db.saved_meals.update_one({"_id": oid}, {"$inc": {"use_count": 1}})
+    await db.saved_meals.update_one({"_id": oid, "user_id": user_id}, {"$inc": {"use_count": 1}})
     doc["_id"] = str(result.inserted_id)
     return doc
