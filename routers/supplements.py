@@ -92,6 +92,7 @@ async def log_supplement(body: SupplementLogCreate, user_id: str = Depends(get_c
             {"$set": {"units_taken": body.units_taken, "updated_at": datetime.now(timezone.utc)}},
         )
         existing["_id"] = str(existing["_id"])
+        await _update_supplement_streak(body.supplement_id, user_id, db)
         return existing
 
     doc = {

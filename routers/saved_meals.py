@@ -1,6 +1,7 @@
 """Saved meal library — CRUD."""
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth import get_current_user
@@ -85,9 +86,17 @@ async def use_saved_meal(meal_id: str, meal_slot: str, user_id: str = Depends(ge
         raise HTTPException(404, "Saved meal not found")
 
     now = datetime.now(timezone.utc)
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    tz_name = (profile or {}).get("user_timezone", "UTC")
+    try:
+        user_tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        user_tz = ZoneInfo("UTC")
+    food_date = now.astimezone(user_tz).date().isoformat()
+
     doc = {
         "user_id": user_id,
-        "date": now.date().isoformat(),
+        "date": food_date,
         "meal_slot": meal_slot,
         "items": meal["items"],
         "image_url": meal.get("image_url"),
