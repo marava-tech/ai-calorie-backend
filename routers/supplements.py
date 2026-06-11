@@ -136,7 +136,6 @@ async def get_supplement_logs(date_str: str, user_id: str = Depends(get_current_
             "name": s["name"],
             "dose_amount": s["dose_amount"],
             "dose_unit": s["dose_unit"],
-            "dose_weight_g": s["dose_amount"],
             "timing": s.get("timing"),
             "taken": sid in taken_ids,
             "units_taken": log["units_taken"] if log else 0,
