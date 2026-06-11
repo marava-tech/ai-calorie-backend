@@ -151,16 +151,35 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
     # Fetch user's API key — only needed if OpenFoodFacts misses an item
     api_key = (profile or {}).get("openrouter_api_key")
 
-    # Resolve macros for all items in parallel
+    # Resolve macros — skip lookup for items that already carry all four macro values
+    # (e.g. supplements logged from the quiz with macro_source='database').
     resolved_items = []
     total_cal = total_protein = total_carbs = total_fat = 0.0
 
-    macro_list = await asyncio.gather(*[
-        _resolve_macros(item.name, item.estimated_weight_g, api_key) for item in body.items
+    items_needing_lookup = [
+        item for item in body.items
+        if not (item.calories_kcal is not None and item.protein_g is not None
+                and item.carbs_g is not None and item.fat_g is not None)
+    ]
+    macro_lookup_results = await asyncio.gather(*[
+        _resolve_macros(item.name, item.estimated_weight_g, api_key)
+        for item in items_needing_lookup
     ])
-    for item, macros in zip(body.items, macro_list):
+    lookup_iter = iter(macro_lookup_results)
+
+    for item in body.items:
         resolved = item.model_dump()
-        resolved.update(macros)
+        if (item.calories_kcal is not None and item.protein_g is not None
+                and item.carbs_g is not None and item.fat_g is not None):
+            macros = {
+                "calories_kcal": item.calories_kcal,
+                "protein_g": item.protein_g,
+                "carbs_g": item.carbs_g,
+                "fat_g": item.fat_g,
+            }
+        else:
+            macros = next(lookup_iter)
+            resolved.update(macros)
         resolved_items.append(resolved)
         total_cal += macros.get("calories_kcal", 0)
         total_protein += macros.get("protein_g", 0)
