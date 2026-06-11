@@ -19,11 +19,24 @@ def _generate_otp() -> str:
     return "".join(random.choices(string.digits, k=6))
 
 
+_OTP_RESEND_COOLDOWN_SECONDS = 60
+
+
 @router.post("/send-otp", status_code=200)
 async def send_otp(body: SendOtpRequest):
     """Send OTP to email. Creates user if first time."""
     db = get_db()
     email = body.email.lower()
+
+    existing = await db.otp_requests.find_one({"email": email})
+    if existing:
+        created_at = existing["created_at"]
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        age_s = (datetime.now(timezone.utc) - created_at).total_seconds()
+        if age_s < _OTP_RESEND_COOLDOWN_SECONDS:
+            wait = int(_OTP_RESEND_COOLDOWN_SECONDS - age_s) + 1
+            raise HTTPException(status_code=429, detail=f"Please wait {wait}s before requesting another OTP")
 
     otp = _generate_otp()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=_OTP_TTL_MINUTES)
@@ -51,7 +64,10 @@ async def verify_otp(body: VerifyOtpRequest):
     if not record:
         raise HTTPException(status_code=400, detail="No OTP found — please request a new one")
 
-    if datetime.now(timezone.utc) > record["expires_at"].replace(tzinfo=timezone.utc):
+    expires_at = record["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
         await db.otp_requests.delete_many({"email": email})
         raise HTTPException(status_code=400, detail="OTP expired — please request a new one")
 

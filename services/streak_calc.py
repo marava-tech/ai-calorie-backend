@@ -7,14 +7,24 @@ def _utc_today() -> date:
     return datetime.now(timezone.utc).date()
 
 
-async def consecutive_days(dates: list[str]) -> tuple[int, int]:
+def _local_today(user_tz: str) -> date:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        tz = ZoneInfo(user_tz)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).date()
+
+
+async def consecutive_days(dates: list[str], user_tz: str = "UTC") -> tuple[int, int]:
     """Returns (current_streak, best_streak) given sorted date strings."""
     if not dates:
         return 0, 0
 
     unique = sorted(set(dates))
-    today = _utc_today().isoformat()
-    yesterday = (_utc_today() - timedelta(days=1)).isoformat()
+    local_today = _local_today(user_tz)
+    today = local_today.isoformat()
+    yesterday = (local_today - timedelta(days=1)).isoformat()
 
     best = 1
     current = 1
@@ -154,6 +164,7 @@ async def calculate_all_streaks(user_id: str) -> dict:
 
     profile = await db.user_profile.find_one({"user_id": user_id})
     min_days = (profile or {}).get("gym_streak_min_days_per_week", 5)
+    user_tz = (profile or {}).get("user_timezone", "UTC")
 
     # Gym attendance comes from daily check-ins (gym: True), not gym_sessions
     # (gym_sessions is used for progress photos, not attendance tracking)
@@ -167,17 +178,17 @@ async def calculate_all_streaks(user_id: str) -> dict:
     gym_weekly["best_days"] = gym_days_best
 
     food_docs = await db.food_logs.find({"user_id": user_id}, {"date": 1}).to_list(None)
-    log_current, log_best = await consecutive_days(list({d["date"] for d in food_docs}))
+    log_current, log_best = await consecutive_days(list({d["date"] for d in food_docs}), user_tz)
 
     if_docs = await db.daily_checkins.find({"if_followed": True, "user_id": user_id}, {"date": 1}).to_list(None)
-    if_current, if_best = await consecutive_days([d["date"] for d in if_docs])
+    if_current, if_best = await consecutive_days([d["date"] for d in if_docs], user_tz)
 
     # Supplement streak: any checkin that has at least one supplement_entry with taken=True
     supp_docs = await db.daily_checkins.find(
         {"supplement_entries": {"$elemMatch": {"taken": True}}, "user_id": user_id},
         {"date": 1},
     ).to_list(None)
-    supp_current, supp_best = await consecutive_days(list({d["date"] for d in supp_docs}))
+    supp_current, supp_best = await consecutive_days(list({d["date"] for d in supp_docs}), user_tz)
 
     return {
         "gym_weekly": gym_weekly,
