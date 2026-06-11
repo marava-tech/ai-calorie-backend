@@ -58,7 +58,11 @@ async def _update_if_log(food_date: str, timestamp: datetime, user_id: str, db):
     window_start_min = start_h * 60 + start_m
     window_end_min = end_h * 60 + end_m
 
-    in_window = window_start_min <= food_time <= window_end_min
+    if window_start_min <= window_end_min:
+        in_window = window_start_min <= food_time <= window_end_min
+    else:
+        # Cross-midnight window (e.g. 22:00–06:00)
+        in_window = food_time >= window_start_min or food_time <= window_end_min
 
     existing = await db.if_logs.find_one({"date": food_date, "user_id": user_id})
     if existing:
@@ -265,7 +269,13 @@ async def get_food_logs(date: str, user_id: str = Depends(get_current_user)):
 async def get_daily_totals(days: int = 30, user_id: str = Depends(get_current_user)):
     """Returns daily aggregated calories + protein for the past N days."""
     db = get_db()
-    today = date.today()
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    tz_name = (profile or {}).get("user_timezone", "UTC")
+    try:
+        user_tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        user_tz = ZoneInfo("UTC")
+    today = datetime.now(user_tz).date()
     match_stage: dict = {"user_id": user_id}
     if days > 0:
         start = (today - timedelta(days=days - 1)).isoformat()
