@@ -1,6 +1,7 @@
 """Daily check-in — upsert one record per user per date."""
+import asyncio
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -23,20 +24,48 @@ class CheckinCreate(BaseModel):
     date: str  # YYYY-MM-DD
     gym: Optional[bool] = None
     workout_type: Optional[str] = None
-    supplement_entries: Optional[list[SupplementEntry]] = None  # replaces all hardcoded supplement fields
+    supplement_entries: Optional[list[SupplementEntry]] = None
     if_followed: Optional[bool] = None
     gym_photo: Optional[str] = None  # "uploaded" | "skipped"
+
+
+async def _sync_supplement_logs(date: str, entries: list[dict], user_id: str, db):
+    """Mirror quiz supplement entries into supplement_logs so the checklist and
+    correlation endpoints stay consistent with what was submitted in the quiz."""
+    now = datetime.now(timezone.utc)
+
+    async def _upsert_one(entry: dict):
+        sid = entry["supplement_id"]
+        if entry.get("taken"):
+            await db.supplement_logs.update_one(
+                {"supplement_id": sid, "date": date, "user_id": user_id},
+                {
+                    "$set": {
+                        "supplement_name": entry["name"],
+                        "units_taken": entry.get("quantity", 1),
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {
+                        "supplement_id": sid,
+                        "date": date,
+                        "user_id": user_id,
+                        "created_at": now,
+                    },
+                },
+                upsert=True,
+            )
+        else:
+            await db.supplement_logs.delete_one(
+                {"supplement_id": sid, "date": date, "user_id": user_id}
+            )
+
+    await asyncio.gather(*[_upsert_one(e) for e in entries])
 
 
 @router.post("", status_code=201)
 async def upsert_checkin(body: CheckinCreate, user_id: str = Depends(get_current_user)):
     db = get_db()
     data = {k: v for k, v in body.model_dump().items() if k != "date" and v is not None}
-    # Serialize supplement_entries as list of dicts
-    if "supplement_entries" in data and data["supplement_entries"] is not None:
-        data["supplement_entries"] = [
-            e if isinstance(e, dict) else e for e in data["supplement_entries"]
-        ]
     now = datetime.now(timezone.utc)
 
     existing = await db.daily_checkins.find_one({"date": body.date, "user_id": user_id})
@@ -46,13 +75,18 @@ async def upsert_checkin(body: CheckinCreate, user_id: str = Depends(get_current
             {"$set": {**data, "updated_at": now}},
         )
         doc = await db.daily_checkins.find_one({"date": body.date, "user_id": user_id})
-        doc["id"] = str(doc.pop("_id"))
-        return doc
+    else:
+        doc = {"date": body.date, "user_id": user_id, **data, "created_at": now, "updated_at": now}
+        result = await db.daily_checkins.insert_one(doc)
+        doc["id"] = str(result.inserted_id)
+        doc.pop("_id", None)
 
-    doc = {"date": body.date, "user_id": user_id, **data, "created_at": now, "updated_at": now}
-    result = await db.daily_checkins.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
+    if body.supplement_entries:
+        entries = [e.model_dump() for e in body.supplement_entries]
+        await _sync_supplement_logs(body.date, entries, user_id, db)
+
+    if "_id" in doc:
+        doc["id"] = str(doc.pop("_id"))
     return doc
 
 
