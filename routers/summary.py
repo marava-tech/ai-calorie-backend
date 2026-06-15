@@ -41,8 +41,12 @@ async def get_day_summary(date: str, user_id: str = Depends(get_current_user)):
 
     gym_attended = bool(gym_session) or bool((checkin or {}).get("gym"))
     workout_type = None
+    gym_notes = None
+    gym_photos = []
     if gym_session:
         workout_type = gym_session.get("workout_type")
+        gym_notes = gym_session.get("notes")
+        gym_photos = gym_session.get("photos") or []
     elif checkin:
         workout_type = checkin.get("workout_type")
 
@@ -60,7 +64,12 @@ async def get_day_summary(date: str, user_id: str = Depends(get_current_user)):
         "date": date,
         "food": food_summary,
         "sleep": sleep_summary,
-        "gym": {"attended": gym_attended, "workout_type": workout_type},
+        "gym": {
+            "attended": gym_attended,
+            "workout_type": workout_type,
+            "notes": gym_notes,
+            "photos": gym_photos,
+        },
         "supplements": supp_names,
         "weight": weight_summary,
         "if_log": if_summary,
