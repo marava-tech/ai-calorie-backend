@@ -49,6 +49,51 @@ async def list_sessions(month: str, user_id: str = Depends(get_current_user)):
     return [_serialize(d) for d in docs]
 
 
+@router.post("/latest/photos", status_code=201)
+async def upload_latest_photo(
+    angle: PhotoAngle = Form(...),
+    photo: UploadFile = File(...),
+    photo_date: Optional[str] = Form(None),
+    user_id: str = Depends(get_current_user),
+):
+    db = get_db()
+    target_date = photo_date or datetime.now(timezone.utc).date().isoformat()
+    session = await db.gym_sessions.find_one({"date": target_date, "user_id": user_id})
+    if not session:
+        session_doc = {
+            "date": target_date,
+            "workout_type": "other",
+            "attended": True,
+            "notes": None,
+            "user_id": user_id,
+            "photos": [],
+            "created_at": datetime.now(timezone.utc),
+        }
+        result = await db.gym_sessions.insert_one(session_doc)
+        session_id = str(result.inserted_id)
+    else:
+        session_id = str(session["_id"])
+
+    image_bytes = await photo.read()
+    validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
+    filename = f"{uuid.uuid4()}.jpg"
+    image_url = await minio_client.upload_image(image_bytes, minio_client.BUCKET_GYM, filename)
+
+    photo_id = str(uuid.uuid4())
+    photo_doc = {
+        "photo_id": photo_id,
+        "angle": angle.value,
+        "image_url": image_url,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    await db.gym_sessions.update_one(
+        {"_id": ObjectId(session_id)},
+        {"$push": {"photos": photo_doc}},
+    )
+    return photo_doc
+
+
 @router.post("/{session_id}/photos", status_code=201)
 async def upload_photo(
     session_id: str,
