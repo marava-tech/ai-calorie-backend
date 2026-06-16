@@ -42,6 +42,7 @@ async def ensure_indexes():
     await db.daily_checkins.create_index([("user_id", 1), ("date", 1)], background=True)
     await db.supplements.create_index([("user_id", 1)], background=True)
     await db.saved_meals.create_index([("user_id", 1)], background=True)
+    await db.saved_foods.create_index([("user_id", 1), ("use_count", -1)], background=True)
     await db.weight_photos.create_index([("user_id", 1), ("date", 1)], background=True)
     await db.if_logs.create_index([("user_id", 1), ("date", 1)], background=True)
     # sparse indexes for streak boolean filters
