@@ -106,7 +106,7 @@ async def use_saved_food(
         "date": food_date,
         "meal_slot": body.meal_slot,
         "items": [item],
-        "image_url": None,
+        "image_url": food.get("image_url"),
         "note": f"Saved food: {food['name']}",
         "totals": {
             "calories_kcal": item["calories_kcal"],
