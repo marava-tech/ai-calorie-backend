@@ -3,6 +3,7 @@ import os
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 
 import aiosmtplib
 
@@ -23,7 +24,7 @@ async def send_otp(to_email: str, otp: str) -> None:
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"{otp} — GymPulse AI verification code"
-    msg["From"] = _from
+    msg["From"] = formataddr(("GymPulse AI", _from))
     msg["To"] = to_email
 
     text = (
