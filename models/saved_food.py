@@ -10,3 +10,4 @@ class SavedFoodCreate(BaseModel):
     carbs_g: float
     fat_g: float
     macro_source: str = "ai_estimated"
+    image_url: Optional[str] = None
