@@ -16,7 +16,7 @@ async def save_api_key(body: ApiKeyBody, user_id: str = Depends(get_current_user
     db = get_db()
     await db.user_profile.update_one(
         {"user_id": user_id},
-        {"$set": {"openrouter_api_key": body.api_key}},
+        {"$set": {"openrouter_api_key": body.api_key.strip()}},
     )
 
 
