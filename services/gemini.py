@@ -39,7 +39,7 @@ def _parse_json(text: str | None) -> dict:
 
 async def _chat(model: str, messages: list[dict], api_key: str, system: str | None = None, max_tokens: int | None = None) -> str:
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://fitness-backend.marava.tech",
     }
