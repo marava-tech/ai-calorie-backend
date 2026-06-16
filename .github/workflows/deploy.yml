@@ -55,7 +55,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             docker pull ghcr.io/marava-tech/fitness-os-backend:latest
-            docker rm -f fitness-os-backend 2>/dev/null || true
-            cd /root/server-setup/services/ai-calorie-counter
-            docker compose --env-file ../../.env up -d --no-deps --pull never fitness-os-backend
+            docker rm -f gympulse-backend 2>/dev/null || true
+            cd /root/server-setup/services/gympulse
+            docker compose --env-file ../../.env up -d --no-deps --pull never gympulse-backend
             docker image prune -f
