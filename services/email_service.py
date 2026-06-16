@@ -33,7 +33,6 @@ async def send_otp(to_email: str, otp: str) -> None:
         f"If you didn't request this, you can safely ignore this email."
     )
 
-    digits = "  ".join(list(otp))
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -52,8 +51,8 @@ async def send_otp(to_email: str, otp: str) -> None:
             <td align="center" style="padding-bottom:32px;">
               <table cellpadding="0" cellspacing="0">
                 <tr>
-                  <td style="background:linear-gradient(135deg,#00C896,#0097a7);border-radius:16px;padding:12px 16px;text-align:center;">
-                    <span style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#fff;">&#9889; GymPulse AI</span>
+                  <td style="background:linear-gradient(135deg,#00C896,#0097a7);border-radius:16px;padding:12px 20px;text-align:center;">
+                    <span style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#fff;">GymPulse AI</span>
                   </td>
                 </tr>
               </table>
@@ -63,15 +62,6 @@ async def send_otp(to_email: str, otp: str) -> None:
           <!-- Card -->
           <tr>
             <td style="background:#12121E;border-radius:24px;border:1px solid rgba(255,255,255,0.06);padding:40px 36px;">
-
-              <!-- Icon -->
-              <table width="100%" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td align="center" style="padding-bottom:24px;">
-                    <div style="display:inline-block;background:rgba(0,200,150,0.12);border-radius:50%;width:64px;height:64px;line-height:64px;text-align:center;font-size:30px;">&#128274;</div>
-                  </td>
-                </tr>
-              </table>
 
               <!-- Title -->
               <table width="100%" cellpadding="0" cellspacing="0">
@@ -91,9 +81,9 @@ async def send_otp(to_email: str, otp: str) -> None:
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td align="center" style="padding-bottom:28px;">
-                    <div style="background:#0E0E1C;border:1px solid rgba(0,200,150,0.25);border-radius:16px;padding:28px 24px;display:inline-block;width:100%;box-sizing:border-box;">
-                      <p style="margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:2px;color:#00C896;text-transform:uppercase;">Your verification code</p>
-                      <p style="margin:0;font-size:42px;font-weight:900;letter-spacing:14px;color:#ffffff;font-variant-numeric:tabular-nums;">{digits}</p>
+                    <div style="background:#0E0E1C;border:1px solid rgba(0,200,150,0.25);border-radius:16px;padding:28px 24px;width:100%;box-sizing:border-box;">
+                      <p style="margin:0 0 12px;font-size:11px;font-weight:700;letter-spacing:2px;color:#00C896;text-transform:uppercase;">Your verification code</p>
+                      <p style="margin:0;font-size:38px;font-weight:900;letter-spacing:8px;color:#ffffff;font-family:'Courier New',Courier,monospace;">{otp}</p>
                     </div>
                   </td>
                 </tr>
@@ -106,7 +96,7 @@ async def send_otp(to_email: str, otp: str) -> None:
                     <table cellpadding="0" cellspacing="0">
                       <tr>
                         <td style="background:rgba(255,200,0,0.08);border:1px solid rgba(255,200,0,0.18);border-radius:8px;padding:8px 16px;">
-                          <span style="font-size:12px;font-weight:700;color:#FFD600;">&#9203; Expires in 5 minutes</span>
+                          <span style="font-size:12px;font-weight:700;color:#FFD600;">Expires in 5 minutes</span>
                         </td>
                       </tr>
                     </table>
