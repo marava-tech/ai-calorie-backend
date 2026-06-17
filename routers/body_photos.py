@@ -11,7 +11,7 @@ from auth import get_current_user
 from database import get_db
 from services import gemini as gemini_svc
 from services import minio_client
-from utils import validate_image_upload
+from utils import validate_image_upload, get_openrouter_key
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +65,9 @@ async def compare_body_photos(req: CompareRequest, user_id: str = Depends(get_cu
 
     db = get_db()
 
-    # Fetch user's API key
+    # Fetch user's API key (falls back to server-wide key for internal testing)
     profile = await db.user_profile.find_one({"user_id": user_id})
-    api_key = (profile or {}).get("openrouter_api_key")
+    api_key = get_openrouter_key(profile)
     if not api_key:
         raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
 

@@ -1,5 +1,6 @@
 """Shared utility helpers."""
 import logging
+import os
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException, UploadFile
@@ -14,6 +15,11 @@ _IMAGE_MAGIC: list[tuple[bytes, str]] = [
     (b"\x89PNG", "PNG"),
     (b"RIFF", "WebP"),  # WebP starts with RIFF....WEBP
 ]
+
+
+def get_openrouter_key(profile: dict | None) -> str | None:
+    """Return the user's personal OpenRouter key, falling back to the server-wide key."""
+    return (profile or {}).get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY")
 
 
 def parse_object_id(value: str, label: str = "ID") -> ObjectId:
