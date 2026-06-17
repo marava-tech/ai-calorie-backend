@@ -15,7 +15,7 @@ from models.food_log import FoodLogCreate, FoodItem, MacroSource, MealSlot
 from services import gemini as gemini_svc
 from services import minio_client
 from services.openfoodfacts import lookup_macros
-from utils import validate_image_upload
+from utils import validate_image_upload, get_openrouter_key
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,9 @@ async def analyze_food(
     image_bytes = await photo.read()
     validate_image_upload(image_bytes, photo.filename or "", photo.content_type)
 
-    # Fetch user's API key
+    # Fetch user's API key (falls back to server-wide key for internal testing)
     profile = await db.user_profile.find_one({"user_id": user_id})
-    api_key = (profile or {}).get("openrouter_api_key")
+    api_key = get_openrouter_key(profile)
     if not api_key:
         raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
 
@@ -153,7 +153,7 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
     food_date = now.astimezone(user_tz).date().isoformat()
 
     # Fetch user's API key — only needed if OpenFoodFacts misses an item
-    api_key = (profile or {}).get("openrouter_api_key")
+    api_key = get_openrouter_key(profile)
 
     # Resolve macros — skip lookup for items that already carry all four macro values
     # (e.g. supplements logged from the quiz with macro_source='database').
@@ -251,7 +251,7 @@ async def update_food_log(
         raise HTTPException(404, "Food log not found")
 
     profile = await db.user_profile.find_one({"user_id": user_id})
-    api_key = (profile or {}).get("openrouter_api_key")
+    api_key = get_openrouter_key(profile)
 
     resolved_items = []
     total_cal = total_protein = total_carbs = total_fat = 0.0
