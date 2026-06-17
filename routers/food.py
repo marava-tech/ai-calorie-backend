@@ -232,6 +232,97 @@ async def delete_food_log(log_id: str, user_id: str = Depends(get_current_user))
         raise HTTPException(404, "Food log not found")
 
 
+@router.put("/logs/{log_id}")
+async def update_food_log(
+    log_id: str,
+    body: FoodLogCreate,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
+):
+    db = get_db()
+    try:
+        oid = ObjectId(log_id)
+    except Exception:
+        raise HTTPException(400, "Invalid log ID")
+
+    # Check if the log exists and belongs to the user
+    existing_log = await db.food_logs.find_one({"_id": oid, "user_id": user_id})
+    if not existing_log:
+        raise HTTPException(404, "Food log not found")
+
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    api_key = (profile or {}).get("openrouter_api_key")
+
+    resolved_items = []
+    total_cal = total_protein = total_carbs = total_fat = 0.0
+
+    items_needing_lookup = [
+        item for item in body.items
+        if not (item.calories_kcal is not None and item.protein_g is not None
+                and item.carbs_g is not None and item.fat_g is not None)
+    ]
+    macro_lookup_results = await asyncio.gather(*[
+        _resolve_macros(item.name, item.estimated_weight_g, api_key)
+        for item in items_needing_lookup
+    ])
+    lookup_iter = iter(macro_lookup_results)
+
+    for item in body.items:
+        resolved = item.model_dump()
+        if (item.calories_kcal is not None and item.protein_g is not None
+                and item.carbs_g is not None and item.fat_g is not None):
+            macros = {
+                "calories_kcal": item.calories_kcal,
+                "protein_g": item.protein_g,
+                "carbs_g": item.carbs_g,
+                "fat_g": item.fat_g,
+            }
+        else:
+            macros = next(lookup_iter)
+            resolved.update(macros)
+        resolved_items.append(resolved)
+        total_cal += macros.get("calories_kcal", 0)
+        total_protein += macros.get("protein_g", 0)
+        total_carbs += macros.get("carbs_g", 0)
+        total_fat += macros.get("fat_g", 0)
+
+    update_doc = {
+        "meal_slot": body.meal_slot,
+        "items": resolved_items,
+        "note": body.note,
+        "totals": {
+            "calories_kcal": round(total_cal, 1),
+            "protein_g": round(total_protein, 1),
+            "carbs_g": round(total_carbs, 1),
+            "fat_g": round(total_fat, 1),
+        },
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if body.image_url is not None:
+        update_doc["image_url"] = body.image_url
+
+    await db.food_logs.update_one({"_id": oid, "user_id": user_id}, {"$set": update_doc})
+
+    log_date = existing_log.get("date")
+    if log_date:
+        background_tasks.add_task(
+            _update_if_log,
+            log_date,
+            existing_log.get("created_at") or datetime.now(timezone.utc),
+            user_id,
+            db,
+        )
+
+    updated = await db.food_logs.find_one({"_id": oid})
+    if updated:
+        updated["_id"] = str(updated["_id"])
+        if "created_at" in updated and isinstance(updated["created_at"], datetime):
+            updated["created_at"] = updated["created_at"].isoformat()
+        if "updated_at" in updated and isinstance(updated["updated_at"], datetime):
+            updated["updated_at"] = updated["updated_at"].isoformat()
+    return updated
+
+
 @router.get("/logs")
 async def get_food_logs(date: str, user_id: str = Depends(get_current_user)):
     """date format: YYYY-MM-DD (query param ?date=)"""
