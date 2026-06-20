@@ -1,9 +1,10 @@
 """Image upload via s3.marava.tech."""
 import io
+import os
 import httpx
 
-UPLOAD_URL = "https://s3.marava.tech/upload"
-UPLOAD_API_KEY = "REDACTED_UPLOAD_API_KEY"
+UPLOAD_URL = os.environ["UPLOAD_URL"]
+UPLOAD_API_KEY = os.environ["UPLOAD_API_KEY"]
 BUCKET = "ai-calorie-counter"
 
 BUCKET_FOOD = BUCKET
