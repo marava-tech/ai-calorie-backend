@@ -207,10 +207,12 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
     }
 
     # Supplements are submitted once per day from the daily quiz.
-    # Replace any existing supplement entries for today to prevent duplicates
-    # when the user re-submits the quiz.
+    # Always clear previous supplement food logs on re-submit, then only insert if
+    # there are actual items (handles the case where no supplements were taken).
     if body.meal_slot == MealSlot.supplement:
         await db.food_logs.delete_many({"date": food_date, "meal_slot": MealSlot.supplement.value, "user_id": user_id})
+        if not body.items:
+            return {"date": food_date, "meal_slot": "supplement", "items": [], "totals": {"calories_kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}}
 
     result = await db.food_logs.insert_one(doc)
 
