@@ -8,7 +8,8 @@ class NotificationPrefs(BaseModel):
     weight_reminder: bool = True
     gym_photo_nudge: bool = True
     weekly_summary: bool = True
-    end_of_day_reconcile: bool = True  # evening nudge if < 2 meals logged today
+    daily_checkin_reminder: bool = True  # 10pm summary: today's kcal + protein + remaining
+    end_of_day_reconcile: bool = True    # 8:30pm nudge if < 2 meals logged today
 
 
 class SleepThresholds(BaseModel):
