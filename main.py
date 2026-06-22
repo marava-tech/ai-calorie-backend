@@ -108,22 +108,64 @@ async def _check_gym_photo_nudge():
 
 
 async def _send_daily_quiz_reminder():
-    """Send daily 10pm IST check-in reminder (runs at 16:30 UTC)."""
+    """Send daily 10pm IST check-in + today's log summary (runs at 16:30 UTC)."""
     db = get_db()
     profiles = await db.user_profile.find({"fcm_token": {"$ne": None}}).to_list(None)
 
     async def _send(profile_doc):
         if not profile_doc.get("notification_prefs", {}).get("daily_checkin_reminder", True):
             return
+        user_id = profile_doc.get("user_id")
+        tz_name = profile_doc.get("user_timezone", "UTC")
+        try:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            user_tz = ZoneInfo(tz_name)
+        except Exception:
+            from zoneinfo import ZoneInfo
+            user_tz = ZoneInfo("UTC")
+
+        today = datetime.now(user_tz).date().isoformat()
+
+        # Fetch today's totals
+        pipeline = [
+            {"$match": {"user_id": user_id, "date": today}},
+            {"$group": {
+                "_id": None,
+                "total_kcal": {"$sum": "$totals.calories_kcal"},
+                "total_protein": {"$sum": "$totals.protein_g"},
+                "meal_count": {"$sum": 1},
+            }},
+        ]
+        totals_docs = await db.food_logs.aggregate(pipeline).to_list(1)
+        totals = totals_docs[0] if totals_docs else {}
+
+        total_kcal = round(totals.get("total_kcal", 0))
+        total_protein = round(totals.get("total_protein", 0))
+        meal_count = totals.get("meal_count", 0)
+        goal_kcal = profile_doc.get("goal_kcal") or 0
+
+        if meal_count == 0:
+            notif_body = "No meals logged yet today — don't forget to track your food!"
+        else:
+            remaining = goal_kcal - total_kcal if goal_kcal else 0
+            remaining_str = (
+                f"{abs(remaining)} kcal {'over' if remaining < 0 else 'remaining'}"
+                if goal_kcal else f"{total_kcal} kcal logged"
+            )
+            notif_body = (
+                f"{total_kcal} kcal · {total_protein}g protein · "
+                f"{meal_count} meal{'s' if meal_count != 1 else ''} — {remaining_str}"
+            )
+
         try:
             await fcm_svc.send_notification(
                 profile_doc["fcm_token"],
-                "Time for your daily check-in!",
-                "Log your supplements, gym, and sleep for today.",
-                {"type": "daily_quiz"},
+                "Today's Log Summary",
+                notif_body,
+                {"type": "daily_quiz", "date": today},
             )
         except Exception as e:
-            logger.error("Failed to send daily quiz reminder FCM for user %s: %s", profile_doc.get("user_id"), e)
+            logger.error("Failed to send daily quiz reminder FCM for user %s: %s", user_id, e)
 
     await asyncio.gather(*[_send(p) for p in profiles])
 
