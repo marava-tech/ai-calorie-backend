@@ -20,6 +20,30 @@ class MacroSource(str, Enum):
     ai_estimated = "ai_estimated"
 
 
+class CookingMethod(str, Enum):
+    raw = "raw"
+    boiled = "boiled"
+    steamed = "steamed"
+    grilled = "grilled"
+    fried = "fried"
+    curry = "curry"
+    deep_fried = "deep_fried"
+
+
+class SourceType(str, Enum):
+    home = "home"
+    restaurant = "restaurant"
+
+
+class AiOriginalMacros(BaseModel):
+    """Snapshot of the AI-estimated macros before the user edited them.
+    Sent from the client at save time to enable the correction learning loop."""
+    calories_kcal: float
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+
+
 class FoodItem(BaseModel):
     name: str
     estimated_weight_g: float
@@ -28,6 +52,10 @@ class FoodItem(BaseModel):
     carbs_g: Optional[float] = None
     fat_g: Optional[float] = None
     macro_source: MacroSource = MacroSource.ai_estimated
+    cooking_method: Optional[CookingMethod] = None
+    # AI estimate snapshot — present only when the client has an original AI estimate
+    # to compare against. Used to capture corrections; stripped before persistence.
+    ai_original: Optional[AiOriginalMacros] = None
 
 
 class FoodLogCreate(BaseModel):
@@ -35,6 +63,7 @@ class FoodLogCreate(BaseModel):
     items: List[FoodItem]
     image_url: Optional[str] = None
     note: Optional[str] = None
+    source_type: Optional[SourceType] = None
 
 
 class AnalyzeRequest(BaseModel):

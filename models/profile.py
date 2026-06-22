@@ -8,6 +8,7 @@ class NotificationPrefs(BaseModel):
     weight_reminder: bool = True
     gym_photo_nudge: bool = True
     weekly_summary: bool = True
+    end_of_day_reconcile: bool = True  # evening nudge if < 2 meals logged today
 
 
 class SleepThresholds(BaseModel):
@@ -75,3 +76,5 @@ class TDEEResult(BaseModel):
     protein_g: int      # 2g/kg
     carbs_g: int
     fat_g: int
+    real_tdee_kcal: Optional[int] = None  # adaptive, derived from intake+weight data
+    tdee_source: str = "formula"          # "formula" | "adaptive"

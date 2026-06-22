@@ -17,20 +17,142 @@ from services import minio_client
 from services.openfoodfacts import lookup_macros
 from utils import validate_image_upload, get_openrouter_key
 
+# Correction-blend config
+_CORRECTION_EPSILON = 0.05   # ignore edits < 5% relative change (noise threshold)
+_CORRECTION_MAX_BLEND = 0.40  # cap blend at ±40% to prevent runaway corrections
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/food", tags=["food"])
 
 
-async def _resolve_macros(name: str, weight_g: float, api_key: str | None) -> dict:
+async def _resolve_macros(
+    name: str,
+    weight_g: float,
+    api_key: str | None,
+    cooking_method: str | None = None,
+    source_type: str | None = None,
+    user_id: str | None = None,
+) -> dict:
     result = await lookup_macros(name, weight_g)
     if result:
         return result
     if not api_key:
         raise HTTPException(402, "Set your OpenRouter API key in Settings to use AI features")
-    ai_result = await gemini_svc.estimate_macros(name, weight_g, api_key=api_key)
+    ai_result = await gemini_svc.estimate_macros(
+        name, weight_g, api_key=api_key,
+        cooking_method=cooking_method, source_type=source_type,
+    )
     ai_result["source"] = "ai_estimated"
+
+    # Blend in user's personal correction if one exists for this food name
+    if user_id:
+        name_norm = name.strip().lower()
+        db = get_db()
+        correction = await db.food_corrections.find_one({"user_id": user_id, "name_norm": name_norm})
+        if correction:
+            count = correction.get("count", 1)
+            # Weight blend toward correction proportional to confidence (capped at 0.6 after 5+ edits)
+            blend_weight = min(0.12 * count, 0.60)
+            corr = correction["corrected_per_g"]
+
+            def _apply(ai_val: float, corr_per_g: float, w: float) -> float:
+                corrected = corr_per_g * weight_g
+                delta_ratio = (corrected - ai_val) / ai_val if ai_val else 0.0
+                # Cap blend delta at ±_CORRECTION_MAX_BLEND to prevent runaway
+                clamped_delta = max(-_CORRECTION_MAX_BLEND, min(_CORRECTION_MAX_BLEND, delta_ratio))
+                return round(ai_val * (1 + clamped_delta * w), 1)
+
+            if ai_result.get("calories_kcal", 0) > 0:
+                ai_result["calories_kcal"] = _apply(ai_result["calories_kcal"], corr["cal_per_g"], blend_weight)
+                ai_result["protein_g"] = _apply(ai_result["protein_g"], corr["protein_per_g"], blend_weight)
+                ai_result["carbs_g"] = _apply(ai_result["carbs_g"], corr["carbs_per_g"], blend_weight)
+                ai_result["fat_g"] = _apply(ai_result["fat_g"], corr["fat_per_g"], blend_weight)
+                ai_result["personalized"] = True
+
     return ai_result
+
+
+async def _capture_corrections(items: list, user_id: str, db) -> None:
+    """For each item that has an ai_original snapshot, compare per-gram macros with what
+    the user actually saved.  If the relative change exceeds the noise threshold, upsert a
+    running-average correction record in food_corrections so future estimates can be biased
+    toward the user's preferred values.
+    """
+    for item in items:
+        orig = item.get("ai_original") if isinstance(item, dict) else None
+        if orig is None:
+            continue
+        weight = float(item.get("estimated_weight_g") or 0)
+        if weight <= 0:
+            continue
+
+        # Current (user-accepted) per-gram values
+        cur_cal = float(item.get("calories_kcal") or 0) / weight
+        cur_prot = float(item.get("protein_g") or 0) / weight
+        cur_carbs = float(item.get("carbs_g") or 0) / weight
+        cur_fat = float(item.get("fat_g") or 0) / weight
+
+        # Original AI per-gram values
+        if isinstance(orig, dict):
+            ai_cal = float(orig.get("calories_kcal") or 0) / weight
+            ai_prot = float(orig.get("protein_g") or 0) / weight
+            ai_carbs = float(orig.get("carbs_g") or 0) / weight
+            ai_fat = float(orig.get("fat_g") or 0) / weight
+        else:
+            ai_cal = float(orig.calories_kcal) / weight
+            ai_prot = float(orig.protein_g) / weight
+            ai_carbs = float(orig.carbs_g) / weight
+            ai_fat = float(orig.fat_g) / weight
+
+        # Only record if at least one macro changed meaningfully
+        if ai_cal <= 0:
+            continue
+        rel_change = abs(cur_cal - ai_cal) / ai_cal
+        if rel_change < _CORRECTION_EPSILON:
+            continue
+
+        name_norm = item.get("name", "").strip().lower()
+        if not name_norm:
+            continue
+
+        # Upsert a running average (weighted by count) of the corrected per-gram values
+        existing = await db.food_corrections.find_one({"user_id": user_id, "name_norm": name_norm})
+        if existing:
+            n = existing.get("count", 1)
+            def _blend(old: float, new: float, n: int) -> float:
+                return (old * n + new) / (n + 1)
+
+            await db.food_corrections.update_one(
+                {"user_id": user_id, "name_norm": name_norm},
+                {"$set": {
+                    "corrected_per_g.cal_per_g": _blend(existing["corrected_per_g"]["cal_per_g"], cur_cal, n),
+                    "corrected_per_g.protein_per_g": _blend(existing["corrected_per_g"]["protein_per_g"], cur_prot, n),
+                    "corrected_per_g.carbs_per_g": _blend(existing["corrected_per_g"]["carbs_per_g"], cur_carbs, n),
+                    "corrected_per_g.fat_per_g": _blend(existing["corrected_per_g"]["fat_per_g"], cur_fat, n),
+                    "count": n + 1,
+                    "updated_at": datetime.now(timezone.utc),
+                }},
+            )
+        else:
+            await db.food_corrections.insert_one({
+                "user_id": user_id,
+                "name_norm": name_norm,
+                "original_per_g": {
+                    "cal_per_g": ai_cal,
+                    "protein_per_g": ai_prot,
+                    "carbs_per_g": ai_carbs,
+                    "fat_per_g": ai_fat,
+                },
+                "corrected_per_g": {
+                    "cal_per_g": cur_cal,
+                    "protein_per_g": cur_prot,
+                    "carbs_per_g": cur_carbs,
+                    "fat_per_g": cur_fat,
+                },
+                "count": 1,
+                "updated_at": datetime.now(timezone.utc),
+            })
 
 
 async def _update_if_log(food_date: str, timestamp: datetime, user_id: str, db):
@@ -123,9 +245,9 @@ async def analyze_food(
                 "overlap": round(best_overlap, 2),
             }
 
-    # Resolve macros for all detected items in parallel
+    # Resolve macros for all detected items in parallel (with personalized correction blend)
     macro_list = await asyncio.gather(*[
-        _resolve_macros(item["name"], item["estimated_weight_g"], api_key) for item in items
+        _resolve_macros(item["name"], item["estimated_weight_g"], api_key, user_id=user_id) for item in items
     ])
     enriched_items = [{**item, **macros} for item, macros in zip(items, macro_list)]
 
@@ -166,7 +288,12 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
                 and item.carbs_g is not None and item.fat_g is not None)
     ]
     macro_lookup_results = await asyncio.gather(*[
-        _resolve_macros(item.name, item.estimated_weight_g, api_key)
+        _resolve_macros(
+            item.name, item.estimated_weight_g, api_key,
+            cooking_method=item.cooking_method.value if item.cooking_method else None,
+            source_type=body.source_type.value if body.source_type else None,
+            user_id=user_id,
+        )
         for item in items_needing_lookup
     ])
     lookup_iter = iter(macro_lookup_results)
@@ -184,6 +311,8 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
         else:
             macros = next(lookup_iter)
             resolved.update(macros)
+        # Strip client-only correction snapshot before DB write
+        resolved.pop("ai_original", None)
         resolved_items.append(resolved)
         total_cal += macros.get("calories_kcal", 0)
         total_protein += macros.get("protein_g", 0)
@@ -194,6 +323,7 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
         "user_id": user_id,
         "date": food_date,
         "meal_slot": body.meal_slot,
+        "source_type": body.source_type.value if body.source_type else None,
         "items": resolved_items,
         "image_url": body.image_url,
         "note": body.note,
@@ -217,6 +347,9 @@ async def create_food_log(body: FoodLogCreate, background_tasks: BackgroundTasks
     result = await db.food_logs.insert_one(doc)
 
     background_tasks.add_task(_update_if_log, food_date, now, user_id, db)
+    # Capture any user corrections vs AI estimate for the learning loop
+    items_with_originals = [item.model_dump() for item in body.items]
+    background_tasks.add_task(_capture_corrections, items_with_originals, user_id, db)
 
     doc["_id"] = str(result.inserted_id)
     return doc
@@ -264,7 +397,12 @@ async def update_food_log(
                 and item.carbs_g is not None and item.fat_g is not None)
     ]
     macro_lookup_results = await asyncio.gather(*[
-        _resolve_macros(item.name, item.estimated_weight_g, api_key)
+        _resolve_macros(
+            item.name, item.estimated_weight_g, api_key,
+            cooking_method=item.cooking_method.value if item.cooking_method else None,
+            source_type=body.source_type.value if body.source_type else None,
+            user_id=user_id,
+        )
         for item in items_needing_lookup
     ])
     lookup_iter = iter(macro_lookup_results)
@@ -282,6 +420,8 @@ async def update_food_log(
         else:
             macros = next(lookup_iter)
             resolved.update(macros)
+        # Strip client-only correction snapshot before DB write
+        resolved.pop("ai_original", None)
         resolved_items.append(resolved)
         total_cal += macros.get("calories_kcal", 0)
         total_protein += macros.get("protein_g", 0)
@@ -314,6 +454,9 @@ async def update_food_log(
             user_id,
             db,
         )
+    # Capture any user corrections vs AI estimate for the learning loop
+    items_with_originals = [item.model_dump() for item in body.items]
+    background_tasks.add_task(_capture_corrections, items_with_originals, user_id, db)
 
     updated = await db.food_logs.find_one({"_id": oid})
     if updated:
@@ -392,3 +535,78 @@ async def get_daily_totals(days: int = 30, user_id: str = Depends(get_current_us
 
     result = await db.food_logs.aggregate(pipeline).to_list(None)
     return {"totals": result}
+
+
+@router.get("/logging-score")
+async def get_logging_score(days: int = 7, user_id: str = Depends(get_current_user)):
+    """Returns a logging consistency score (0–100) for the last N days.
+
+    Score = (logged_days / total_days) * 100, plus a bonus for multi-meal coverage.
+    Also includes a 7-day average kcal for the weekly headline.
+    """
+    db = get_db()
+    profile = await db.user_profile.find_one({"user_id": user_id})
+    tz_name = (profile or {}).get("user_timezone", "UTC")
+    try:
+        user_tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        user_tz = ZoneInfo("UTC")
+
+    today = datetime.now(user_tz).date()
+    start = (today - timedelta(days=days - 1)).isoformat()
+
+    pipeline = [
+        {"$match": {"user_id": user_id, "date": {"$gte": start, "$lte": today.isoformat()}}},
+        {"$group": {
+            "_id": "$date",
+            "total_kcal": {"$sum": "$totals.calories_kcal"},
+            "meal_slots": {"$addToSet": "$meal_slot"},
+        }},
+    ]
+    day_docs = await db.food_logs.aggregate(pipeline).to_list(None)
+
+    logged_days = len(day_docs)
+    total_days = days
+
+    avg_kcal = (
+        sum(d.get("total_kcal", 0) for d in day_docs) / logged_days
+        if logged_days > 0
+        else None
+    )
+
+    # Bonus: average meal slot coverage per logged day
+    slot_coverage = (
+        sum(len(d.get("meal_slots", [])) for d in day_docs) / logged_days
+        if logged_days > 0
+        else 0
+    )
+
+    # Base score: coverage ratio
+    base = (logged_days / total_days) * 100
+    # Bonus up to 10 pts for logging ≥3 meals
+    bonus = min(10, (slot_coverage / 3) * 10)
+    score = round(min(100, base + bonus))
+
+    # Trend: compare last 7 days avg vs previous 7 days avg (if enough data)
+    trend_delta = None
+    if days >= 7:
+        prev_start = (today - timedelta(days=days * 2 - 1)).isoformat()
+        prev_end = (today - timedelta(days=days)).isoformat()
+        prev_pipeline = [
+            {"$match": {"user_id": user_id, "date": {"$gte": prev_start, "$lte": prev_end}}},
+            {"$group": {"_id": None, "total_kcal": {"$sum": "$totals.calories_kcal"}, "count": {"$sum": 1}}},
+        ]
+        prev_docs = await db.food_logs.aggregate(prev_pipeline).to_list(None)
+        if prev_docs and prev_docs[0].get("count", 0) > 0:
+            prev_avg = prev_docs[0]["total_kcal"] / prev_docs[0]["count"]
+            if avg_kcal is not None:
+                trend_delta = round(avg_kcal - prev_avg)
+
+    return {
+        "score": score,
+        "logged_days": logged_days,
+        "total_days": total_days,
+        "avg_kcal_7d": round(avg_kcal) if avg_kcal is not None else None,
+        "trend_delta_kcal": trend_delta,
+        "slot_coverage_avg": round(slot_coverage, 1),
+    }
