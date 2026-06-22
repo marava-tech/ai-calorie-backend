@@ -41,7 +41,7 @@ async def _chat(model: str, messages: list[dict], api_key: str, system: str | No
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://fitness-backend.marava.tech",
+        "HTTP-Referer": "https://gympulse-backend.marava.tech",
     }
     payload: dict = {"model": model, "messages": messages}
     if system:
