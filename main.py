@@ -46,6 +46,7 @@ from routers import (
     notifications,
     daily_checkin,
     settings as settings_router,
+    tdee as tdee_router,
 )
 
 scheduler = AsyncIOScheduler()
@@ -127,6 +128,43 @@ async def _send_daily_quiz_reminder():
     await asyncio.gather(*[_send(p) for p in profiles])
 
 
+async def _end_of_day_reconcile():
+    """Send FCM nudge at ~8:30 PM local time if the user logged fewer than 2 meals today.
+
+    Runs at 15:00 UTC (covers IST 20:30). Uses date in user's local timezone.
+    """
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    db = get_db()
+    profiles = await db.user_profile.find({"fcm_token": {"$ne": None}}).to_list(None)
+
+    async def _send(profile_doc):
+        if not profile_doc.get("notification_prefs", {}).get("end_of_day_reconcile", True):
+            return
+        user_id = profile_doc.get("user_id")
+        tz_name = profile_doc.get("user_timezone", "UTC")
+        try:
+            user_tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            user_tz = ZoneInfo("UTC")
+
+        today = datetime.now(user_tz).date().isoformat()
+        count = await db.food_logs.count_documents({"user_id": user_id, "date": today})
+        if count >= 2:
+            return
+
+        try:
+            await fcm_svc.send_notification(
+                profile_doc["fcm_token"],
+                "Don't forget to log your meals!",
+                f"Only {count} meal{'s' if count != 1 else ''} logged today — close the gap before bed.",
+                {"type": "eod_reconcile"},
+            )
+        except Exception as e:
+            logger.error("Failed to send EOD reconcile FCM for user %s: %s", user_id, e)
+
+    await asyncio.gather(*[_send(p) for p in profiles])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _check_env()
@@ -137,6 +175,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_check_gym_photo_nudge, "cron", hour=9, minute=0)
     # Daily at 16:30 UTC (22:00 IST) — daily check-in reminder
     scheduler.add_job(_send_daily_quiz_reminder, "cron", hour=16, minute=30)
+    # Daily at 15:00 UTC (20:30 IST) — EOD reconcile nudge if < 2 meals logged
+    scheduler.add_job(_end_of_day_reconcile, "cron", hour=15, minute=0)
     scheduler.start()
     logger.info("Fitness OS backend started")
     yield
@@ -168,6 +208,7 @@ app.include_router(summary.router)
 app.include_router(notifications.router)
 app.include_router(daily_checkin.router)
 app.include_router(settings_router.router)
+app.include_router(tdee_router.router)
 
 
 @app.get("/health")

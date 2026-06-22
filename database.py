@@ -48,6 +48,10 @@ async def ensure_indexes():
     # sparse indexes for streak boolean filters
     await db.daily_checkins.create_index([("user_id", 1), ("gym", 1)], sparse=True, background=True)
     await db.daily_checkins.create_index([("user_id", 1), ("if_followed", 1)], sparse=True, background=True)
+    # Food corrections — per-user per-food-name correction learning store
+    await db.food_corrections.create_index(
+        [("user_id", 1), ("name_norm", 1)], background=True, unique=True
+    )
     # OTP expiry — MongoDB auto-deletes documents after expires_at
     await db.otp_requests.create_index("expires_at", expireAfterSeconds=0, background=True)
     await db.users.create_index("email", unique=True, sparse=True, background=True)

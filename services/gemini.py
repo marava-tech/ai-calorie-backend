@@ -56,9 +56,13 @@ async def _chat(model: str, messages: list[dict], api_key: str, system: str | No
 
 _FOOD_SYSTEM = (
     "You are an expert nutritionist and food analyst trained on professional dietary databases "
-    "(USDA FoodData Central, NCCDB). You specialize in visual food identification and accurate "
-    "portion weight estimation from photos. Your estimates are used for health tracking, so "
-    "precision matters — always err on the side of slight overestimation rather than under."
+    "(USDA FoodData Central, NCCDB, Indian Food Composition Tables — IFCT 2017). "
+    "You specialize in visual food identification and accurate portion weight estimation from photos, "
+    "with deep expertise in Indian home-cooked and restaurant food. "
+    "Indian cooked food almost always contains cooking oil or ghee that is NOT visible in the photo — "
+    "you must account for this invisible fat in every curry, sabzi, gravy, and tadka. "
+    "Your estimates are used for fat-loss health tracking; precision matters and you must NEVER "
+    "under-estimate calories — always err on the side of slight overestimation."
 )
 
 _FOOD_ANALYZE_PROMPT = """Analyze this food photo with high precision. Identify every distinct food item visible.
@@ -214,26 +218,79 @@ async def compare_body_photos(photos: list[dict], api_key: str) -> dict:
 
 _MACRO_SYSTEM = (
     "You are a registered dietitian with expert-level knowledge of food composition databases "
-    "(USDA FoodData Central, NCCDB, Indian Food Composition Tables). "
-    "Provide accurate macronutrient values scaled to the exact weight given. "
-    "Use the most common preparation method if unspecified. Return precise numbers, not estimates rounded to 5s."
+    "(USDA FoodData Central, NCCDB, IFCT 2017). "
+    "You provide accurate macronutrient values scaled to the exact weight given. "
+    "Return precise numbers, not estimates rounded to 5s.\n\n"
+    "CRITICAL RULES FOR INDIAN COOKED FOOD:\n"
+    "1. COOKING OIL/GHEE: Any curry, gravy, sabzi, fry, or tadka contains invisible cooking fat. "
+    "Add 1–2 tbsp oil (120–240 kcal) per home-cooked serving; 2–3 tbsp for restaurant/dhaba. "
+    "For a 200g chicken or paneer curry, fat should rarely be below 15–20g. "
+    "If your fat estimate is under 12g for a cooked curry, recalculate — it is almost certainly wrong.\n"
+    "2. COOKED RICE CARBS: Cooked white rice = ~28g carbs per 100g (NOT 40g — that is raw rice). "
+    "250g cooked rice ≈ 70g carbs, ~325 kcal.\n"
+    "3. PACKAGED ITEMS: Use the label values exactly. "
+    "Home-cooked/restaurant items: estimate conservatively HIGH on calories.\n"
+    "4. BIAS DIRECTION: When uncertain, round calories UP for cooked food, not down. "
+    "Under-estimating intake sabotages a calorie deficit; a slight over-estimate is safer.\n"
+    "5. CONSISTENCY CHECK: Before returning, verify: protein_g×4 + carbs_g×4 + fat_g×9 ≈ calories_kcal "
+    "(within 5%). If they don't reconcile, recalculate.\n"
+    "6. CONFIDENCE: Return a confidence level (high/medium/low) and the main source of uncertainty."
 )
 
 _MACRO_PROMPT_TEMPLATE = (
-    "Calculate macros for {weight_g}g of {food_name}.\n\n"
+    "Calculate macros for {weight_g}g of {food_name}.{context_line}\n\n"
     "Steps:\n"
-    "1. Identify the standard per-100g values from nutritional databases\n"
+    "1. Identify per-100g values from nutritional databases (USDA / NCCDB / IFCT 2017)\n"
     "2. Scale proportionally to {weight_g}g\n"
-    "3. Account for cooking method if specified in the name\n\n"
+    "3. For Indian cooked items: add invisible cooking oil/ghee per the system rules\n"
+    "4. {cooking_instruction}\n"
+    "5. Verify: protein_g×4 + carbs_g×4 + fat_g×9 must equal calories_kcal within 5%; fix if not\n"
+    "6. When uncertain, round calories UP not down\n\n"
     "Return ONLY valid JSON:\n"
-    '{{"calories_kcal": number, "protein_g": number, "carbs_g": number, "fat_g": number}}\n\n'
+    '{{"calories_kcal": number, "protein_g": number, "carbs_g": number, "fat_g": number, '
+    '"confidence": "high" | "medium" | "low", "uncertainty_note": "string"}}\n\n'
     "Output ONLY the JSON, no explanation."
 )
 
+_COOKING_INSTRUCTIONS: dict[str, str] = {
+    "raw": "Food is raw — use uncooked nutritional values with no added fat.",
+    "boiled": "Food is boiled — use cooked values, no added fat from cooking.",
+    "steamed": "Food is steamed — use cooked values, no added fat from cooking.",
+    "grilled": "Food is grilled — use cooked values, add minimal fat (~1 tsp oil/ghee for grilling).",
+    "fried": "Food is pan-fried — add 1–2 tbsp oil/ghee (120–240 kcal) to the estimate.",
+    "curry": "Food is in a curry/gravy — add 1–2 tbsp cooking oil/ghee plus spice base fat to the estimate.",
+    "deep_fried": "Food is deep-fried — add 2–3 tbsp absorbed oil (240–360 kcal); fat should be significantly higher than uncooked.",
+}
 
-async def estimate_macros(food_name: str, weight_g: float, api_key: str) -> dict:
+
+async def estimate_macros(
+    food_name: str,
+    weight_g: float,
+    api_key: str,
+    cooking_method: str | None = None,
+    source_type: str | None = None,
+) -> dict:
     """Fallback macro estimation when OpenFoodFacts has no match."""
-    prompt = _MACRO_PROMPT_TEMPLATE.format(food_name=food_name, weight_g=weight_g)
+    context_parts = []
+    if cooking_method and cooking_method != "raw":
+        context_parts.append(f"cooking method: {cooking_method.replace('_', '-')}")
+    if source_type == "restaurant":
+        context_parts.append("from a restaurant (use higher oil/butter estimates)")
+    context_line = f" Context: {', '.join(context_parts)}." if context_parts else ""
+
+    cooking_instruction = _COOKING_INSTRUCTIONS.get(
+        cooking_method or "raw",
+        "For Indian cooked items: add invisible cooking oil/ghee per the system rules.",
+    )
+    if source_type == "restaurant":
+        cooking_instruction += " Restaurant cooking: add extra 30–40% oil/butter vs home cooking."
+
+    prompt = _MACRO_PROMPT_TEMPLATE.format(
+        food_name=food_name,
+        weight_g=weight_g,
+        context_line=context_line,
+        cooking_instruction=cooking_instruction,
+    )
     messages = [{"role": "user", "content": prompt}]
     text = await _chat(_TEXT_MODEL, messages, api_key=api_key, system=_MACRO_SYSTEM, max_tokens=200)
     return _parse_json(text)
