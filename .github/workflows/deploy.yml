@@ -1,4 +1,4 @@
-name: Deploy fitness-os-backend
+name: Deploy gympulse-backend
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: fitness-os-backend-deploy-${{ github.ref }}
+  group: gympulse-backend-deploy-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,13 +34,13 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/marava-tech/fitness-os-backend:latest
+          tags: ghcr.io/marava-tech/gympulse-backend:latest
           cache-from: |
             type=gha
-            type=registry,ref=ghcr.io/marava-tech/fitness-os-backend:buildcache
+            type=registry,ref=ghcr.io/marava-tech/gympulse-backend:buildcache
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=ghcr.io/marava-tech/fitness-os-backend:buildcache,mode=max
+            type=registry,ref=ghcr.io/marava-tech/gympulse-backend:buildcache,mode=max
           provenance: false
 
   deploy:
@@ -54,8 +54,8 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            docker pull ghcr.io/marava-tech/fitness-os-backend:latest
+            docker pull ghcr.io/marava-tech/gympulse-backend:latest
             docker rm -f gympulse-backend 2>/dev/null || true
-            cd /root/server-setup/services/gympulse
+            cd /root/server-v2/services/gympulse
             docker compose --env-file ../../.env up -d --no-deps --pull never gympulse-backend
             docker image prune -f
