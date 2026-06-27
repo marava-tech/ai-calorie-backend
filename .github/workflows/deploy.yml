@@ -56,6 +56,10 @@ jobs:
           script: |
             docker pull ghcr.io/marava-tech/gympulse-backend:latest
             docker rm -f gympulse-backend 2>/dev/null || true
+<<<<<<< Updated upstream
             cd /root/server-v2/services/gympulse
+=======
+            cd /root/server/services/gympulse
+>>>>>>> Stashed changes
             docker compose --env-file ../../.env up -d --no-deps --pull never gympulse-backend
             docker image prune -f
